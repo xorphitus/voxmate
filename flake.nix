@@ -58,9 +58,9 @@
             typescript-language-server
           ];
 
-          buildInputs = [ pkgs.openssl ] ++ lib.optionals pkgs.stdenv.isLinux linuxLibs;
+          buildInputs = [ pkgs.openssl ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux linuxLibs;
 
-          shellHook = lib.optionalString pkgs.stdenv.isLinux ''
+          shellHook = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             # Use this shell's toolchain by absolute path. If a profile script
             # re-prepends the system PATH, a host `cc` built against an older
             # glibc would otherwise link (and fail) against these libraries.
