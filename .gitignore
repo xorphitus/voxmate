@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# nix
+.direnv/
+result
+
+# Live2D Cubism Core is not redistributable — each user downloads it.
+public/lib/live2dcubismcore*

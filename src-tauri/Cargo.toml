@@ -1,0 +1,31 @@
+[package]
+name = "voxmate"
+version = "0.1.0"
+description = "A desktop avatar (Live2D / VRM) that speaks with VOICEVOX"
+authors = ["xorphitus"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the bin target on Windows/cargo.
+name = "voxmate_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+axum = "0.8"
+tokio = { version = "1", features = ["net", "macros", "rt-multi-thread"] }
+thiserror = "2"
+
+[dev-dependencies]
+wiremock = "0.6"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

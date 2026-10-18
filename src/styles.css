@@ -1,0 +1,188 @@
+:root {
+  color-scheme: light dark;
+  --bg: #1e1f24;
+  --panel: rgb(30 31 36 / 0.88);
+  --fg: #e8e8ec;
+  --muted: #9a9aa6;
+  --accent: #5fb88a;
+  --error: #ff7b72;
+  --border: rgb(255 255 255 / 0.12);
+  font-family: system-ui, -apple-system, "Noto Sans JP", sans-serif;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f3f6;
+    --panel: rgb(255 255 255 / 0.9);
+    --fg: #1d1d22;
+    --muted: #666672;
+    --accent: #23855a;
+    --error: #c62828;
+    --border: rgb(0 0 0 / 0.12);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body.transparent {
+  background: transparent;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+}
+
+#stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+  padding: 1rem;
+}
+
+#toggle-panel {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0.6;
+}
+
+#toggle-panel:hover {
+  opacity: 1;
+}
+
+#panel {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+}
+
+#panel.hidden {
+  display: none;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.row > select,
+.row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+textarea,
+input,
+select,
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+button {
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+#say {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#status {
+  margin: 0;
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#status.error {
+  color: var(--error);
+}
+
+#queue-info,
+#api-status,
+small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#api-status {
+  margin: 4px 0 0;
+}
+
+#settings summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+#settings .grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+#settings .grid > div > label {
+  display: block;
+  margin: 2px 0;
+}
+
+#api-port {
+  width: 7em;
+}
