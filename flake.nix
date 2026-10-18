@@ -55,6 +55,7 @@
             rust-analyzer
             nodejs_22
             pnpm
+            typescript-language-server
           ];
 
           buildInputs = [ pkgs.openssl ] ++ lib.optionals pkgs.stdenv.isLinux linuxLibs;

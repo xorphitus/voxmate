@@ -4,15 +4,19 @@
       "Bash(curl * http://127.0.0.1:50080/*)"
     ]
   },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
   "sandbox": {
-    "excludedCommands": [
-      "pnpm",
-      "pnpm *"
-    ],
     "network": {
       "allowedDomains": [
         "127.0.0.1:50080"
       ]
-    }
+    },
+    "excludedCommands": [
+      "pnpm",
+      "pnpm *"
+    ]
   }
 }
