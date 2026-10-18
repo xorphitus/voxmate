@@ -10,6 +10,7 @@ import { LocalApiSource } from "./speech/LocalApiSource";
 import { SpeechQueue } from "./speech/SpeechQueue";
 import type { TextSource } from "./speech/TextSource";
 import { Controls } from "./ui/controls";
+import { followTheme } from "./ui/theme";
 import { AudioPlayer } from "./voice/player";
 import { buildTimeline, type Segment } from "./voice/timeline";
 import { fetchSpeakers, setVoicevoxUrl, synthesize } from "./voice/voicevox";
@@ -30,6 +31,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 async function main() {
   const config = await Config.open();
+  const applyTheme = await followTheme(() => config.get("theme"));
   const stage = document.getElementById("stage")!;
   const player = new AudioPlayer();
   player.setVolume(config.get("volume"));
@@ -114,6 +116,10 @@ async function main() {
         case "alwaysOnTop":
           await getCurrentWindow().setAlwaysOnTop(value as boolean);
           break;
+        case "theme":
+          await config.set(key, value);
+          applyTheme();
+          return;
         case "transparent":
         case "apiEnabled":
         case "apiPort":

@@ -11,8 +11,24 @@
   font-size: 14px;
 }
 
+/* data-theme is set by src/ui/theme.ts; the media query covers the moment before it runs. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f3f6;
+  --panel: rgb(255 255 255 / 0.9);
+  --fg: #1d1d22;
+  --muted: #666672;
+  --accent: #23855a;
+  --error: #c62828;
+  --border: rgb(0 0 0 / 0.12);
+}
+
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #f3f3f6;
     --panel: rgb(255 255 255 / 0.9);
     --fg: #1d1d22;
@@ -21,6 +37,11 @@
     --error: #c62828;
     --border: rgb(0 0 0 / 0.12);
   }
+}
+
+select option {
+  background: var(--bg);
+  color: var(--fg);
 }
 
 * {

@@ -1,6 +1,7 @@
 import type { Settings } from "../config";
 import type { TextSource, UtteranceSink } from "../speech/TextSource";
 import type { Speaker } from "../voice/voicevox";
+import type { ThemePreference } from "./theme";
 
 export interface ControlHandlers {
   stop(): void;
@@ -30,6 +31,7 @@ export class Controls implements TextSource {
   private readonly volume = $<HTMLInputElement>("volume");
   private readonly alwaysOnTop = $<HTMLInputElement>("always-on-top");
   private readonly transparent = $<HTMLInputElement>("transparent");
+  private readonly theme = $<HTMLSelectElement>("theme");
   private readonly apiEnabled = $<HTMLInputElement>("api-enabled");
   private readonly apiPort = $<HTMLInputElement>("api-port");
   private readonly apiStatus = $<HTMLParagraphElement>("api-status");
@@ -40,6 +42,7 @@ export class Controls implements TextSource {
     this.volume.value = String(settings.volume);
     this.alwaysOnTop.checked = settings.alwaysOnTop;
     this.transparent.checked = settings.transparent;
+    this.theme.value = settings.theme;
     this.apiEnabled.checked = settings.apiEnabled;
     this.apiPort.value = String(settings.apiPort);
     document.body.classList.toggle("transparent", settings.transparent);
@@ -66,6 +69,7 @@ export class Controls implements TextSource {
     this.volume.addEventListener("input", () => handlers.change("volume", Number(this.volume.value)));
     this.alwaysOnTop.addEventListener("change", () => handlers.change("alwaysOnTop", this.alwaysOnTop.checked));
     this.transparent.addEventListener("change", () => handlers.change("transparent", this.transparent.checked));
+    this.theme.addEventListener("change", () => handlers.change("theme", this.theme.value as ThemePreference));
     this.apiEnabled.addEventListener("change", () => handlers.change("apiEnabled", this.apiEnabled.checked));
     this.apiPort.addEventListener("change", () => {
       const port = Number(this.apiPort.value);

@@ -1,4 +1,5 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
+import type { ThemePreference } from "./ui/theme";
 
 /**
  * Persisted settings. Rust also reads `voicevoxUrl`, `apiEnabled`, `apiPort`,
@@ -15,6 +16,7 @@ export interface Settings {
   apiPort: number;
   alwaysOnTop: boolean;
   transparent: boolean;
+  theme: ThemePreference;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -26,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
   apiPort: 50080,
   alwaysOnTop: false,
   transparent: false,
+  theme: "system",
 };
 
 export const SETTINGS_FILE = "settings.json";
