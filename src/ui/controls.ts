@@ -36,6 +36,9 @@ export class Controls implements TextSource {
   private readonly apiPort = $<HTMLInputElement>("api-port");
   private readonly apiStatus = $<HTMLParagraphElement>("api-status");
   private readonly placeholder = $<HTMLDivElement>("placeholder");
+  private readonly placeholderTitle = $<HTMLParagraphElement>("placeholder-title");
+  private readonly placeholderHint = $<HTMLParagraphElement>("placeholder-hint");
+  private readonly placeholderLoad = $<HTMLButtonElement>("placeholder-load");
 
   constructor(settings: Settings, handlers: ControlHandlers) {
     this.voicevoxUrl.value = settings.voicevoxUrl;
@@ -59,7 +62,7 @@ export class Controls implements TextSource {
     });
     $("stop").addEventListener("click", () => handlers.stop());
     $("load-model").addEventListener("click", () => handlers.loadModel());
-    $("placeholder-load").addEventListener("click", () => handlers.loadModel());
+    this.placeholderLoad.addEventListener("click", () => handlers.loadModel());
     $("refresh-speakers").addEventListener("click", () => handlers.refreshSpeakers());
 
     this.speaker.addEventListener("change", () => handlers.change("speaker", Number(this.speaker.value)));
@@ -125,8 +128,13 @@ export class Controls implements TextSource {
     this.apiStatus.textContent = text;
   }
 
-  setModelLoaded(loaded: boolean): void {
-    this.placeholder.hidden = loaded;
+  /** `loading` names the file being loaded; it only shows while no model is on stage. */
+  setModelState(state: "empty" | "loading" | "loaded", file?: string): void {
+    this.placeholder.hidden = state === "loaded";
+    const loading = state === "loading";
+    this.placeholderTitle.textContent = loading ? `Loading ${file ?? "model"}…` : "No model loaded.";
+    this.placeholderHint.hidden = loading;
+    this.placeholderLoad.disabled = loading;
   }
 
   info(message: string): void {

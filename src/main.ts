@@ -68,19 +68,23 @@ async function main() {
   }
 
   async function loadModel(path: string) {
-    controls.info(`Loading ${path.split("/").pop()}…`);
-    const next = await createAvatar(path, stage);
+    const file = path.split("/").pop();
+    controls.info(`Loading ${file}…`);
+    if (!avatar) controls.setModelState("loading", file);
+    let next: Avatar | null = null;
     try {
+      next = await createAvatar(path, stage);
       await invoke("allow_model_file", { path });
       await next.load(assetUrl(convertFileSrc(""), path));
     } catch (e) {
-      next.dispose();
+      next?.dispose();
+      controls.setModelState(avatar ? "loaded" : "empty");
       throw e;
     }
     avatar?.dispose();
     avatar = next;
-    controls.setModelLoaded(true);
-    controls.info(`Loaded ${path.split("/").pop()}`);
+    controls.setModelState("loaded");
+    controls.info(`Loaded ${file}`);
   }
 
   async function pickModel() {
