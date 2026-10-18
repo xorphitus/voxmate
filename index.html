@@ -23,6 +23,7 @@
         <textarea id="text" rows="2" placeholder="話す内容 (Ctrl/⌘+Enter で送信)"></textarea>
         <div class="row">
           <button type="submit" class="primary">Speak</button>
+          <button type="button" id="ask" title="Ask the LLM and speak its reply">Ask</button>
           <button type="button" id="stop">Stop</button>
           <span id="queue-info"></span>
         </div>
@@ -58,6 +59,18 @@
             <label><input id="always-on-top" type="checkbox" /> Always on top</label>
             <label><input id="transparent" type="checkbox" /> Transparent background <small>(restart)</small></label>
           </div>
+
+          <label for="llm-url">LLM URL</label>
+          <input id="llm-url" type="url" spellcheck="false" placeholder="http://127.0.0.1:8080" />
+
+          <label for="llm-model">LLM model</label>
+          <input id="llm-model" type="text" spellcheck="false" placeholder="as named in llama-swap" />
+
+          <label for="llm-system-prompt">System prompt</label>
+          <textarea id="llm-system-prompt" rows="3"></textarea>
+
+          <label for="llm-history">History</label>
+          <div><input id="llm-history" type="number" min="0" max="200" /> <small>messages</small></div>
 
           <span>Local API</span>
           <div>

@@ -6,6 +6,8 @@ import type { Avatar } from "./avatar/Avatar";
 import { assetUrl, createAvatar } from "./avatar/factory";
 import { Config, type Settings } from "./config";
 import { LipSyncDriver } from "./lipsync/LipSyncDriver";
+import { OpenAiCompatibleProvider } from "./llm/LlmProvider";
+import { LlmSource } from "./llm/LlmSource";
 import { LocalApiSource } from "./speech/LocalApiSource";
 import { SpeechQueue } from "./speech/SpeechQueue";
 import type { TextSource } from "./speech/TextSource";
@@ -136,8 +138,29 @@ async function main() {
     }
   }
 
+  const llm = new LlmSource(
+    new OpenAiCompatibleProvider(() => ({ url: config.get("llmUrl"), model: config.get("llmModel") })),
+    () => ({ systemPrompt: config.get("llmSystemPrompt"), history: config.get("llmHistory") }),
+    (e) => controls.error(`LLM: ${errorText(e)}`),
+  );
+
+  function ask(text: string) {
+    if (!config.get("llmModel")) {
+      controls.error("Set an LLM model in Settings first.");
+      return;
+    }
+    // A new question replaces whatever is still being said.
+    queue.clear();
+    controls.info(`Asking ${config.get("llmModel")}…`);
+    void llm.ask(text);
+  }
+
   const controls = new Controls(config.all(), {
-    stop: () => queue.clear(),
+    stop: () => {
+      llm.cancel();
+      queue.clear();
+    },
+    ask,
     loadModel: () => void pickModel(),
     refreshSpeakers: () => void refreshSpeakers(),
     change: (key, value) => void change(key, value),
@@ -149,7 +172,7 @@ async function main() {
   window.addEventListener("pointerdown", unlock, { once: true });
   window.addEventListener("keydown", unlock, { once: true });
 
-  const sources: TextSource[] = [controls, new LocalApiSource()];
+  const sources: TextSource[] = [controls, new LocalApiSource(), llm];
   for (const source of sources) await source.start((u) => queue.enqueue(u));
 
   const api = await invoke<ApiStatus>("api_status");

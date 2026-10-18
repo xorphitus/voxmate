@@ -5,6 +5,8 @@ import type { ThemePreference } from "./theme";
 
 export interface ControlHandlers {
   stop(): void;
+  /** Send the text to the LLM; its reply is spoken. */
+  ask(text: string): void;
   loadModel(): void;
   refreshSpeakers(): void;
   /** Called after the user edits a setting; the handler persists/applies it. */
@@ -32,6 +34,10 @@ export class Controls implements TextSource {
   private readonly alwaysOnTop = $<HTMLInputElement>("always-on-top");
   private readonly transparent = $<HTMLInputElement>("transparent");
   private readonly theme = $<HTMLSelectElement>("theme");
+  private readonly llmUrl = $<HTMLInputElement>("llm-url");
+  private readonly llmModel = $<HTMLInputElement>("llm-model");
+  private readonly llmSystemPrompt = $<HTMLTextAreaElement>("llm-system-prompt");
+  private readonly llmHistory = $<HTMLInputElement>("llm-history");
   private readonly apiEnabled = $<HTMLInputElement>("api-enabled");
   private readonly apiPort = $<HTMLInputElement>("api-port");
   private readonly apiStatus = $<HTMLParagraphElement>("api-status");
@@ -46,6 +52,10 @@ export class Controls implements TextSource {
     this.alwaysOnTop.checked = settings.alwaysOnTop;
     this.transparent.checked = settings.transparent;
     this.theme.value = settings.theme;
+    this.llmUrl.value = settings.llmUrl;
+    this.llmModel.value = settings.llmModel;
+    this.llmSystemPrompt.value = settings.llmSystemPrompt;
+    this.llmHistory.value = String(settings.llmHistory);
     this.apiEnabled.checked = settings.apiEnabled;
     this.apiPort.value = String(settings.apiPort);
     document.body.classList.toggle("transparent", settings.transparent);
@@ -61,6 +71,12 @@ export class Controls implements TextSource {
       }
     });
     $("stop").addEventListener("click", () => handlers.stop());
+    $("ask").addEventListener("click", () => {
+      const text = this.text.value.trim();
+      if (!text) return;
+      handlers.ask(text);
+      this.text.value = "";
+    });
     $("load-model").addEventListener("click", () => handlers.loadModel());
     this.placeholderLoad.addEventListener("click", () => handlers.loadModel());
     $("refresh-speakers").addEventListener("click", () => handlers.refreshSpeakers());
@@ -73,6 +89,16 @@ export class Controls implements TextSource {
     this.alwaysOnTop.addEventListener("change", () => handlers.change("alwaysOnTop", this.alwaysOnTop.checked));
     this.transparent.addEventListener("change", () => handlers.change("transparent", this.transparent.checked));
     this.theme.addEventListener("change", () => handlers.change("theme", this.theme.value as ThemePreference));
+    this.llmUrl.addEventListener("change", () => handlers.change("llmUrl", this.llmUrl.value.trim()));
+    this.llmModel.addEventListener("change", () => handlers.change("llmModel", this.llmModel.value.trim()));
+    this.llmSystemPrompt.addEventListener("change", () =>
+      handlers.change("llmSystemPrompt", this.llmSystemPrompt.value),
+    );
+    this.llmHistory.addEventListener("change", () => {
+      const count = Number(this.llmHistory.value);
+      if (Number.isInteger(count) && count >= 0 && count <= 200) handlers.change("llmHistory", count);
+      else this.error("History must be between 0 and 200 messages.");
+    });
     this.apiEnabled.addEventListener("change", () => handlers.change("apiEnabled", this.apiEnabled.checked));
     this.apiPort.addEventListener("change", () => {
       const port = Number(this.apiPort.value);

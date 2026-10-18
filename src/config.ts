@@ -17,6 +17,12 @@ export interface Settings {
   alwaysOnTop: boolean;
   transparent: boolean;
   theme: ThemePreference;
+  /** OpenAI-compatible server root (no `/v1`), e.g. llama-swap. */
+  llmUrl: string;
+  llmModel: string;
+  llmSystemPrompt: string;
+  /** Past messages sent with each question. */
+  llmHistory: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +35,10 @@ export const DEFAULT_SETTINGS: Settings = {
   alwaysOnTop: false,
   transparent: false,
   theme: "system",
+  llmUrl: "http://127.0.0.1:8080", // llama-swap's default listen address
+  llmModel: "",
+  llmSystemPrompt: "あなたはデスクトップのキャラクターです。読み上げられるので、記号や絵文字を使わず、話し言葉で短く答えてください。",
+  llmHistory: 20,
 };
 
 export const SETTINGS_FILE = "settings.json";

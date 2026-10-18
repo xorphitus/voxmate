@@ -1,14 +1,17 @@
 mod api;
+mod llm;
 mod voicevox;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
 use crate::api::SpeakRequest;
+use crate::llm::{ChatMessage, LlmClient};
 use crate::voicevox::{Speaker, VoicevoxClient};
 
 /// Shared with the frontend (`src/config.ts`), which owns writing it.
@@ -77,6 +80,57 @@ fn set_voicevox_url(url: String, client: State<'_, VoicevoxClient>) -> Result<()
     client.set_base_url(&url).map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "event", content = "data", rename_all = "camelCase")]
+enum LlmEvent {
+    Delta { text: String },
+    Done,
+    Error { message: String },
+}
+
+/// The generation in flight and its request id, so Stop (or a new question)
+/// can abort it without touching a newer one.
+#[derive(Default)]
+struct LlmTask(Mutex<Option<(u32, tauri::async_runtime::JoinHandle<()>)>>);
+
+/// Streams a chat completion into `on_event`. Replaces any running one.
+#[tauri::command]
+fn llm_chat(
+    id: u32,
+    url: String,
+    model: String,
+    messages: Vec<ChatMessage>,
+    on_event: Channel<LlmEvent>,
+    client: State<'_, Arc<LlmClient>>,
+    task: State<'_, LlmTask>,
+) {
+    let client = Arc::clone(&client);
+    let handle = tauri::async_runtime::spawn(async move {
+        let result = client
+            .chat(&url, &model, &messages, |text| {
+                let _ = on_event.send(LlmEvent::Delta { text });
+            })
+            .await;
+        let _ = on_event.send(match result {
+            Ok(()) => LlmEvent::Done,
+            Err(e) => LlmEvent::Error { message: e.to_string() },
+        });
+    });
+    if let Some((_, previous)) = task.0.lock().unwrap().replace((id, handle)) {
+        previous.abort();
+    }
+}
+
+#[tauri::command]
+fn llm_cancel(id: u32, task: State<'_, LlmTask>) {
+    let mut current = task.0.lock().unwrap();
+    if current.as_ref().is_some_and(|(running, _)| *running == id) {
+        if let Some((_, handle)) = current.take() {
+            handle.abort();
+        }
+    }
+}
+
 /// Lets the asset protocol serve a user-picked model and the files next to it
 /// (textures, motions, physics...). The scope starts empty.
 #[tauri::command]
@@ -143,6 +197,8 @@ pub fn run() {
                 VoicevoxClient::new(voicevox::DEFAULT_URL)
             })?;
             app.manage(client);
+            app.manage(Arc::new(LlmClient::new()?));
+            app.manage(LlmTask::default());
             app.manage(Mutex::new(start_api(&handle, &settings)));
 
             // Created here rather than in tauri.conf.json because transparency
@@ -160,6 +216,8 @@ pub fn run() {
             voicevox_speakers,
             voicevox_synthesize,
             set_voicevox_url,
+            llm_chat,
+            llm_cancel,
             allow_model_file,
             api_status,
         ])
