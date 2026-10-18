@@ -9,6 +9,21 @@ const VOWEL_EXPRESSIONS: Record<Vowel, string> = { a: "aa", i: "ih", u: "ou", e:
 
 const BLINK_SECONDS = 0.15;
 
+/** How far the upper arms drop from the T-pose, in radians. */
+const ARM_DROP = 1.2;
+
+/**
+ * Z rotation that lowers the left upper arm (the right one is its negation).
+ *
+ * The normalized rig always rests in a T-pose, but for VRM 0.x it keeps the
+ * model's original -Z facing; rotateVRM0 only turns the scene around. X and Z
+ * rotations are therefore mirrored on VRM 0.x, and the VRM 1.0 value would
+ * raise the arms instead.
+ */
+export function leftArmRestZ(metaVersion: "0" | "1" | undefined): number {
+  return metaVersion === "0" ? ARM_DROP : -ARM_DROP;
+}
+
 export class VrmAvatar implements Avatar {
   readonly kind = "vrm";
   private readonly renderer: THREE.WebGLRenderer;
@@ -94,10 +109,11 @@ export class VrmAvatar implements Avatar {
   private relaxArms(): void {
     const h = this.vrm?.humanoid;
     if (!h) return;
+    const z = leftArmRestZ(this.vrm?.meta?.metaVersion);
     const left = h.getNormalizedBoneNode("leftUpperArm");
     const right = h.getNormalizedBoneNode("rightUpperArm");
-    if (left) left.rotation.z = -1.2;
-    if (right) right.rotation.z = 1.2;
+    if (left) left.rotation.z = z;
+    if (right) right.rotation.z = -z;
   }
 
   private frameUpperBody(): void {
