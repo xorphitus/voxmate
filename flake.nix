@@ -69,6 +69,9 @@
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=$NIX_CC/bin/cc
             export GIO_MODULE_DIR=${pkgs.glib-networking}/lib/gio/modules/
             export GST_PLUGIN_SYSTEM_PATH_1_0=${lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" gstPlugins}
+            # WebKitGTK's DMA-BUF renderer dies with Wayland "Error 71
+            # (Protocol error)" on NVIDIA, and leaves a blank window elsewhere.
+            export WEBKIT_DISABLE_DMABUF_RENDERER=1
             export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:''${XDG_DATA_DIRS:-}
           '';
         };
