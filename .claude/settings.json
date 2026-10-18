@@ -1,8 +1,18 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(curl * http://127.0.0.1:50080/*)"
+    ]
+  },
   "sandbox": {
     "excludedCommands": [
       "pnpm",
       "pnpm *"
-    ]
+    ],
+    "network": {
+      "allowedDomains": [
+        "127.0.0.1:50080"
+      ]
+    }
   }
 }
