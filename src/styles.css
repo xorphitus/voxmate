@@ -53,15 +53,42 @@ body.transparent {
   display: block;
 }
 
+/* Author display rules would otherwise override the hidden attribute. */
+[hidden] {
+  display: none !important;
+}
+
+/* Centered in the area above the panel; --panel-height is set by Controls. */
 #placeholder {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  margin: 0;
+  top: 48px;
+  left: 16px;
+  right: 16px;
+  bottom: calc(var(--panel-height, 0px) + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 1rem;
   color: var(--muted);
   text-align: center;
-  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#placeholder p {
+  margin: 0;
+}
+
+body.transparent #placeholder {
+  background: var(--panel);
+}
+
+code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.95em;
 }
 
 #toggle-panel {

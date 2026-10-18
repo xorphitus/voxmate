@@ -33,7 +33,7 @@ export class Controls implements TextSource {
   private readonly apiEnabled = $<HTMLInputElement>("api-enabled");
   private readonly apiPort = $<HTMLInputElement>("api-port");
   private readonly apiStatus = $<HTMLParagraphElement>("api-status");
-  private readonly placeholder = $<HTMLParagraphElement>("placeholder");
+  private readonly placeholder = $<HTMLDivElement>("placeholder");
 
   constructor(settings: Settings, handlers: ControlHandlers) {
     this.voicevoxUrl.value = settings.voicevoxUrl;
@@ -56,6 +56,7 @@ export class Controls implements TextSource {
     });
     $("stop").addEventListener("click", () => handlers.stop());
     $("load-model").addEventListener("click", () => handlers.loadModel());
+    $("placeholder-load").addEventListener("click", () => handlers.loadModel());
     $("refresh-speakers").addEventListener("click", () => handlers.refreshSpeakers());
 
     this.speaker.addEventListener("change", () => handlers.change("speaker", Number(this.speaker.value)));
@@ -78,6 +79,12 @@ export class Controls implements TextSource {
       const hidden = panel.classList.toggle("hidden");
       toggle.setAttribute("aria-expanded", String(!hidden));
     });
+    // Keep the empty state clear of the panel, which grows when settings open.
+    // A hidden panel has zero height, so it also fires on toggle.
+    new ResizeObserver(() => {
+      const height = panel.offsetHeight ? panel.offsetHeight + 8 : 0;
+      document.documentElement.style.setProperty("--panel-height", `${height}px`);
+    }).observe(panel);
   }
 
   start(sink: UtteranceSink): void {
