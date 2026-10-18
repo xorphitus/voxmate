@@ -1,6 +1,7 @@
 import type { TextSource, UtteranceSink } from "../speech/TextSource";
 import type { ChatMessage, LlmProvider } from "./LlmProvider";
 import { SentenceSplitter } from "./sentences";
+import { ThinkFilter } from "./think";
 
 export interface LlmSourceOptions {
   systemPrompt: string;
@@ -51,16 +52,20 @@ export class LlmSource implements TextSource {
       { role: "user", content: question },
     ];
 
+    const think = new ThinkFilter();
     const splitter = new SentenceSplitter();
+    // Only the spoken part is kept, so reasoning does not fill the context.
     let reply = "";
     const say = (text: string) => {
       if (!signal.aborted) this.sink?.({ text, source: this.name });
     };
+    const feed = (text: string) => {
+      reply += text;
+      splitter.push(text).forEach(say);
+    };
     try {
-      for await (const delta of this.provider.chat(messages, signal)) {
-        reply += delta;
-        splitter.push(delta).forEach(say);
-      }
+      for await (const delta of this.provider.chat(messages, signal)) feed(think.push(delta));
+      feed(think.flush());
       const rest = splitter.flush();
       if (rest) say(rest);
     } catch (e) {

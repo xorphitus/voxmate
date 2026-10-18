@@ -38,6 +38,14 @@ describe("LlmSource", () => {
     ]);
   });
 
+  it("neither speaks nor remembers think blocks", async () => {
+    const { source, said, requests } = setup([["<think>hmm", "</think>はい。"], ["b。"]]);
+    await source.ask("q1");
+    await source.ask("q2");
+    expect(said.map((u) => u.text)).toEqual(["はい。", "b。"]);
+    expect(requests[1][1]).toEqual({ role: "assistant", content: "はい。" });
+  });
+
   it("sends the system prompt and past turns", async () => {
     const { source, requests } = setup([["一。"], ["二。"]], 10, "short answers");
     await source.ask("q1");
