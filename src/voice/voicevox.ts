@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { VoiceParams } from "./params";
 import type { AudioQuery } from "./timeline";
 
 export interface SpeakerStyle {
@@ -25,8 +26,8 @@ export function setVoicevoxUrl(url: string): Promise<void> {
   return invoke("set_voicevox_url", { url });
 }
 
-export async function synthesize(text: string, speaker: number): Promise<Synthesis> {
-  const packed = await invoke<ArrayBuffer>("voicevox_synthesize", { text, speaker });
+export async function synthesize(text: string, speaker: number, voice: VoiceParams = {}): Promise<Synthesis> {
+  const packed = await invoke<ArrayBuffer>("voicevox_synthesize", { text, speaker, voice });
   return unpack(packed);
 }
 

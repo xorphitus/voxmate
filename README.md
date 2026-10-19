@@ -88,6 +88,12 @@ curl -X POST localhost:50080/speak -H 'content-type: application/json' \
 curl -X POST localhost:50080/speak -H 'content-type: application/json' \
   -d '{"text":"やっほー","speaker":1}'
 
+# Optional: voice parameters (speed, pitch, intonation, volume,
+# prePhonemeLength, postPhonemeLength, pauseLengthScale). They override the
+# character's defaults from Settings; out-of-range values get a 400.
+curl -X POST localhost:50080/speak -H 'content-type: application/json' \
+  -d '{"text":"ゆっくり話すのだ","voice":{"speed":0.8,"pitch":0.05}}'
+
 curl localhost:50080/health
 ```
 
@@ -112,7 +118,8 @@ data directory): characters, VOICEVOX URL, volume, and the API, LLM and window
 options.
 
 - **Characters** bundle a model, a VOICEVOX speaker, a persona (the LLM system
-  prompt) and an optional LLM model. The one picked next to the speaker list is
+  prompt), an optional LLM model and default voice parameters (empty = engine
+  default). The one picked next to the speaker list is
   on stage: it speaks lines that name no character, and the speaker list, Load
   model… and the Character settings edit it. Its id is what `character` in
   `POST /speak` refers to. Settings from before characters existed (model,

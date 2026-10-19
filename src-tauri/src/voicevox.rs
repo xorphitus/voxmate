@@ -10,6 +10,7 @@ use std::time::Duration;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
 pub const DEFAULT_URL: &str = "http://127.0.0.1:50021";
 
@@ -42,6 +43,96 @@ pub struct Speaker {
     pub name: String,
     pub speaker_uuid: String,
     pub styles: Vec<SpeakerStyle>,
+}
+
+// Mirrored by `VoiceParams` in src/voice/params.ts.
+/// How a line sounds. Each field overrides one `audio_query` value; omitted
+/// fields keep what the engine chose. Ranges are those of the VOICEVOX editor.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceParams {
+    /// `speedScale`, 0.5 to 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 0.5, maximum = 2.0, example = 1.2)]
+    pub speed: Option<f64>,
+    /// `pitchScale`, -0.15 to 0.15.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = -0.15, maximum = 0.15)]
+    pub pitch: Option<f64>,
+    /// `intonationScale`, 0 to 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 0.0, maximum = 2.0)]
+    pub intonation: Option<f64>,
+    /// `volumeScale`, 0 to 2. The app volume applies on top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 0.0, maximum = 2.0)]
+    pub volume: Option<f64>,
+    /// Silence before the line in seconds, 0 to 1.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 0.0, maximum = 1.5)]
+    pub pre_phoneme_length: Option<f64>,
+    /// Silence after the line in seconds, 0 to 1.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 0.0, maximum = 1.5)]
+    pub post_phoneme_length: Option<f64>,
+    /// Multiplies pauses between phrases, 0 to 2 (newer engines only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 0.0, maximum = 2.0)]
+    pub pause_length_scale: Option<f64>,
+}
+
+impl VoiceParams {
+    /// `(field name, audio_query key, value, min, max)` for each field.
+    fn fields(&self) -> [(&'static str, &'static str, Option<f64>, f64, f64); 7] {
+        [
+            ("speed", "speedScale", self.speed, 0.5, 2.0),
+            ("pitch", "pitchScale", self.pitch, -0.15, 0.15),
+            ("intonation", "intonationScale", self.intonation, 0.0, 2.0),
+            ("volume", "volumeScale", self.volume, 0.0, 2.0),
+            (
+                "prePhonemeLength",
+                "prePhonemeLength",
+                self.pre_phoneme_length,
+                0.0,
+                1.5,
+            ),
+            (
+                "postPhonemeLength",
+                "postPhonemeLength",
+                self.post_phoneme_length,
+                0.0,
+                1.5,
+            ),
+            (
+                "pauseLengthScale",
+                "pauseLengthScale",
+                self.pause_length_scale,
+                0.0,
+                2.0,
+            ),
+        ]
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        for (name, _, value, min, max) in self.fields() {
+            if let Some(v) = value {
+                if !(min..=max).contains(&v) {
+                    return Err(format!("voice.{name} must be between {min} and {max}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the set fields into an `audio_query`.
+    pub fn apply(&self, query: &mut Value) {
+        let Some(obj) = query.as_object_mut() else { return };
+        for (_, key, value, _, _) in self.fields() {
+            if let Some(v) = value {
+                obj.insert(key.into(), v.into());
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,8 +234,9 @@ impl VoicevoxClient {
         Ok(self.send("/synthesis", req).await?.bytes().await?.to_vec())
     }
 
-    pub async fn synthesize(&self, text: &str, speaker: u32) -> Result<Synthesis> {
-        let query = self.audio_query(text, speaker).await?;
+    pub async fn synthesize(&self, text: &str, speaker: u32, voice: &VoiceParams) -> Result<Synthesis> {
+        let mut query = self.audio_query(text, speaker).await?;
+        voice.apply(&mut query);
         let wav = self.synthesis(&query, speaker).await?;
         Ok(Synthesis { query, wav })
     }
@@ -216,9 +308,69 @@ mod tests {
             .await;
 
         let client = VoicevoxClient::new(&format!("{}/", server.uri())).unwrap();
-        let out = client.synthesize("こんにちは", 3).await.unwrap();
+        let out = client
+            .synthesize("こんにちは", 3, &VoiceParams::default())
+            .await
+            .unwrap();
         assert_eq!(out.query, sample_query());
         assert_eq!(out.wav, b"RIFFfake");
+    }
+
+    #[tokio::test]
+    async fn applies_voice_params_before_synthesis() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/audio_query"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_query()))
+            .mount(&server)
+            .await;
+        let mut expected = sample_query();
+        expected["speedScale"] = json!(1.5);
+        expected["pitchScale"] = json!(-0.05);
+        expected["prePhonemeLength"] = json!(0.0);
+        Mock::given(method("POST"))
+            .and(path("/synthesis"))
+            .and(body_json(&expected))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"RIFFfake".to_vec()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = VoicevoxClient::new(&server.uri()).unwrap();
+        let voice = VoiceParams {
+            speed: Some(1.5),
+            pitch: Some(-0.05),
+            pre_phoneme_length: Some(0.0),
+            ..Default::default()
+        };
+        let out = client.synthesize("x", 3, &voice).await.unwrap();
+        // The returned query is what was synthesized, so lip sync follows it.
+        assert_eq!(out.query, expected);
+    }
+
+    #[test]
+    fn validates_voice_ranges() {
+        assert!(VoiceParams::default().validate().is_ok());
+        let ok = VoiceParams {
+            speed: Some(0.5),
+            pitch: Some(0.15),
+            pause_length_scale: Some(2.0),
+            ..Default::default()
+        };
+        assert!(ok.validate().is_ok());
+        let too_fast = VoiceParams {
+            speed: Some(2.5),
+            ..Default::default()
+        };
+        assert_eq!(
+            too_fast.validate().unwrap_err(),
+            "voice.speed must be between 0.5 and 2"
+        );
+        let negative = VoiceParams {
+            post_phoneme_length: Some(-0.1),
+            ..Default::default()
+        };
+        assert!(negative.validate().is_err());
     }
 
     #[tokio::test]
@@ -231,7 +383,7 @@ mod tests {
             .await;
 
         let client = VoicevoxClient::new(&server.uri()).unwrap();
-        let err = client.synthesize("x", 9999).await.unwrap_err();
+        let err = client.synthesize("x", 9999, &VoiceParams::default()).await.unwrap_err();
         match err {
             Error::Status { endpoint, status, .. } => {
                 assert_eq!(endpoint, "/audio_query");

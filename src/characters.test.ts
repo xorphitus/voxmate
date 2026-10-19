@@ -18,6 +18,7 @@ const character = (id: string, speaker = 1): Character => ({
   speaker,
   persona: "",
   llmModel: "",
+  voice: {},
 });
 
 describe("migrateCharacter", () => {
@@ -29,6 +30,7 @@ describe("migrateCharacter", () => {
       speaker: 8,
       persona: "be nice",
       llmModel: "",
+      voice: {},
     });
   });
 
@@ -39,9 +41,9 @@ describe("migrateCharacter", () => {
 
 describe("sanitizeCharacters", () => {
   it("drops malformed entries and duplicate ids, and fills missing fields", () => {
-    const stored = [{ id: "a", speaker: 2 }, { id: "a" }, { id: "Bad id" }, null, "x", { name: "no id" }];
+    const stored = [{ id: "a", speaker: 2, voice: { speed: 1.5, pitch: 9 } }, { id: "a" }, { id: "Bad id" }, null, "x", { name: "no id" }];
     expect(sanitizeCharacters(stored)).toEqual([
-      { id: "a", name: "a", modelPath: null, speaker: 2, persona: "", llmModel: "" },
+      { id: "a", name: "a", modelPath: null, speaker: 2, persona: "", llmModel: "", voice: { speed: 1.5 } },
     ]);
   });
 

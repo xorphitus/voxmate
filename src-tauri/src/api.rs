@@ -25,6 +25,8 @@ use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
+use crate::voicevox::VoiceParams;
+
 pub const DEFAULT_PORT: u16 = 50080;
 pub const MAX_TEXT_CHARS: usize = 2000;
 
@@ -45,6 +47,10 @@ pub struct SpeakRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = 3)]
     pub speaker: Option<u32>,
+    /// How the line sounds. Each field overrides the character's default,
+    /// which overrides the engine's. Out-of-range values are rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<VoiceParams>,
 }
 
 /// Mirrors the id rule in src/characters.ts.
@@ -110,10 +116,14 @@ pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
             );
         }
     }
+    if let Some(voice) = &req.voice {
+        voice.validate()?;
+    }
     Ok(SpeakRequest {
         text: text.to_string(),
         character: req.character,
         speaker: req.speaker,
+        voice: req.voice,
     })
 }
 
@@ -146,7 +156,7 @@ fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
     request_body(content = SpeakRequest, content_type = "application/json"),
     responses(
         (status = 202, description = "Queued (not yet spoken)", body = SpeakAccepted),
-        (status = 400, description = "Blank or too long text, a malformed character id, or malformed JSON", body = ApiError),
+        (status = 400, description = "Blank or too long text, a malformed character id, an out-of-range voice parameter, or malformed JSON", body = ApiError),
         (status = 403, description = "`Host` is not a loopback name", body = ApiError),
         (status = 415, description = "Content type is not `application/json`", body = ApiError),
         (status = 422, description = "JSON does not match `SpeakRequest`", body = ApiError),
@@ -293,7 +303,7 @@ mod tests {
         let (sink, got) = capture();
         let res = router(sink)
             .oneshot(post_speak(
-                r#"{"text":"  こんにちは ","character":"zunda-1","speaker":3}"#,
+                r#"{"text":"  こんにちは ","character":"zunda-1","speaker":3,"voice":{"speed":1.3,"pitch":0.05}}"#,
                 "application/json",
             ))
             .await
@@ -305,7 +315,12 @@ mod tests {
             vec![SpeakRequest {
                 text: "こんにちは".into(),
                 character: Some("zunda-1".into()),
-                speaker: Some(3)
+                speaker: Some(3),
+                voice: Some(VoiceParams {
+                    speed: Some(1.3),
+                    pitch: Some(0.05),
+                    ..Default::default()
+                }),
             }]
         );
     }
@@ -321,6 +336,21 @@ mod tests {
         let got = got.lock().unwrap();
         assert_eq!(got[0].character, None);
         assert_eq!(got[0].speaker, None);
+    }
+
+    #[tokio::test]
+    async fn rejects_out_of_range_voice() {
+        let (sink, got) = capture();
+        let res = router(sink)
+            .oneshot(post_speak(r#"{"text":"hi","voice":{"speed":3}}"#, "application/json"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body_json(res).await,
+            json!({"error": "voice.speed must be between 0.5 and 2"})
+        );
+        assert!(got.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -101,7 +101,7 @@
             }
           },
           "400": {
-            "description": "Blank or too long text, a malformed character id, or malformed JSON",
+            "description": "Blank or too long text, a malformed character id, an out-of-range voice parameter, or malformed JSON",
             "content": {
               "application/json": {
                 "schema": {
@@ -224,6 +224,17 @@
             "description": "VOICEVOX style id (`GET /speakers` on the engine). Overrides the\ncharacter's voice. Omit it to use the character's speaker.",
             "example": 3,
             "minimum": 0
+          },
+          "voice": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VoiceParams",
+                "description": "How the line sounds. Each field overrides the character's default,\nwhich overrides the engine's. Out-of-range values are rejected."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -232,6 +243,83 @@
         "enum": [
           "queued"
         ]
+      },
+      "VoiceParams": {
+        "type": "object",
+        "description": "How a line sounds. Each field overrides one `audio_query` value; omitted\nfields keep what the engine chose. Ranges are those of the VOICEVOX editor.",
+        "properties": {
+          "speed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`speedScale`, 0.5 to 2.",
+            "example": 1.2,
+            "maximum": 2,
+            "minimum": 0.5
+          },
+          "pitch": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`pitchScale`, -0.15 to 0.15.",
+            "maximum": 0.15,
+            "minimum": -0.15
+          },
+          "intonation": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`intonationScale`, 0 to 2.",
+            "maximum": 2,
+            "minimum": 0
+          },
+          "volume": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`volumeScale`, 0 to 2. The app volume applies on top.",
+            "maximum": 2,
+            "minimum": 0
+          },
+          "prePhonemeLength": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Silence before the line in seconds, 0 to 1.5.",
+            "maximum": 1.5,
+            "minimum": 0
+          },
+          "postPhonemeLength": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Silence after the line in seconds, 0 to 1.5.",
+            "maximum": 1.5,
+            "minimum": 0
+          },
+          "pauseLengthScale": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Multiplies pauses between phrases, 0 to 2 (newer engines only).",
+            "maximum": 2,
+            "minimum": 0
+          }
+        }
       }
     }
   }

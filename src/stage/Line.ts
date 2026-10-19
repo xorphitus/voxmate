@@ -1,3 +1,5 @@
+import type { VoiceParams } from "../voice/params";
+
 /**
  * One line performed on stage. Every producer (UI, Local API, LLM, later
  * scripts) emits lines, and the StagePlayer performs them in order.
@@ -9,6 +11,8 @@ export interface Line {
   text: string;
   /** VOICEVOX style id; overrides the character's speaker. */
   speaker?: number;
+  /** Overrides the character's default voice, field by field. */
+  voice?: VoiceParams;
   /** Name of the TextSource it came from, for logs/UI. */
   source: string;
   /** Lines of one scene are queued together and can be cancelled together. */

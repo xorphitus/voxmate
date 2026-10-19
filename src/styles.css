@@ -234,3 +234,15 @@ small {
 #api-port {
   width: 7em;
 }
+
+/* Filled by Controls from VOICE_RANGES; an empty field leaves the engine's value. */
+.voice-grid {
+  display: grid;
+  grid-template-columns: max-content 6em;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.voice-grid input {
+  width: 100%;
+}

@@ -12,7 +12,7 @@ use tauri_plugin_store::StoreExt;
 
 use crate::api::SpeakRequest;
 use crate::llm::{ChatMessage, LlmClient};
-use crate::voicevox::{Speaker, VoicevoxClient};
+use crate::voicevox::{Speaker, VoiceParams, VoicevoxClient};
 
 /// Shared with the frontend (`src/config.ts`), which owns writing it.
 const SETTINGS_FILE: &str = "settings.json";
@@ -66,9 +66,15 @@ async fn voicevox_speakers(client: State<'_, VoicevoxClient>) -> Result<Vec<Spea
 async fn voicevox_synthesize(
     text: String,
     speaker: u32,
+    voice: Option<VoiceParams>,
     client: State<'_, VoicevoxClient>,
 ) -> Result<tauri::ipc::Response, String> {
-    let synthesis = client.synthesize(&text, speaker).await.map_err(|e| e.to_string())?;
+    let voice = voice.unwrap_or_default();
+    voice.validate()?;
+    let synthesis = client
+        .synthesize(&text, speaker, &voice)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(synthesis.pack()))
 }
 

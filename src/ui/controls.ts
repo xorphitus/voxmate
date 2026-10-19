@@ -1,6 +1,7 @@
 import type { Character } from "../characters";
 import type { Settings } from "../config";
-import type { TextSource, LineSink } from "../speech/TextSource";
+import type { LineSink, TextSource } from "../speech/TextSource";
+import { inRange, VOICE_FIELDS, VOICE_RANGES, type VoiceField } from "../voice/params";
 import type { Speaker } from "../voice/voicevox";
 import type { ThemePreference } from "./theme";
 
@@ -47,6 +48,7 @@ export class Controls implements TextSource {
   private readonly characterModel = $<HTMLElement>("character-model");
   private readonly characterPersona = $<HTMLTextAreaElement>("character-persona");
   private readonly characterLlmModel = $<HTMLInputElement>("character-llm-model");
+  private readonly characterVoice = new Map<VoiceField, HTMLInputElement>();
   private readonly characterRemove = $<HTMLButtonElement>("character-remove");
   private readonly voicevoxUrl = $<HTMLInputElement>("voicevox-url");
   private readonly volume = $<HTMLInputElement>("volume");
@@ -68,6 +70,7 @@ export class Controls implements TextSource {
   private current!: Character;
 
   constructor(settings: Settings, handlers: ControlHandlers) {
+    this.buildVoiceInputs(handlers);
     this.setCharacters(settings.characters, settings.defaultCharacter);
     this.voicevoxUrl.value = settings.voicevoxUrl;
     this.volume.value = String(settings.volume);
@@ -169,6 +172,36 @@ export class Controls implements TextSource {
     this.text.value = "";
   }
 
+  /** One number input per voice field; empty leaves it to the engine. */
+  private buildVoiceInputs(handlers: ControlHandlers): void {
+    const container = $("character-voice");
+    for (const field of VOICE_FIELDS) {
+      const { min, max, step, label } = VOICE_RANGES[field];
+      const input = document.createElement("input");
+      Object.assign(input, { type: "number", id: `voice-${field}`, min, max, step, placeholder: "engine" });
+      const name = document.createElement("label");
+      name.htmlFor = input.id;
+      name.textContent = label;
+      input.addEventListener("change", () => {
+        const voice = { ...this.current.voice };
+        const raw = input.value.trim();
+        if (raw === "") {
+          delete voice[field];
+        } else if (inRange(field, Number(raw))) {
+          voice[field] = Number(raw);
+        } else {
+          this.error(`${label} must be between ${min} and ${max}.`);
+          const value = this.current.voice[field];
+          input.value = value === undefined ? "" : String(value);
+          return;
+        }
+        handlers.editCharacter({ voice });
+      });
+      container.append(name, input);
+      this.characterVoice.set(field, input);
+    }
+  }
+
   setSpeakers(speakers: Speaker[]): void {
     this.speakers = speakers;
     this.renderSpeakers();
@@ -195,6 +228,10 @@ export class Controls implements TextSource {
     this.characterModel.textContent = this.current.modelPath?.split("/").pop() ?? "none (Load model…)";
     this.characterPersona.value = this.current.persona;
     this.characterLlmModel.value = this.current.llmModel;
+    for (const [field, input] of this.characterVoice) {
+      const value = this.current.voice[field];
+      input.value = value === undefined ? "" : String(value);
+    }
     this.renderSpeakers();
   }
 

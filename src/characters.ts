@@ -1,3 +1,5 @@
+import { sanitizeVoice, type VoiceParams } from "./voice/params";
+
 /**
  * A character bundles what used to be single global settings: the model, the
  * voice and the persona. Lines name a character by `id`.
@@ -14,6 +16,8 @@ export interface Character {
   persona: string;
   /** Overrides the LLM model from Settings when not empty. */
   llmModel: string;
+  /** Default voice; a line's own `voice` overrides it field by field. */
+  voice: VoiceParams;
 }
 
 export const DEFAULT_SPEAKER = 3; // ずんだもん (ノーマル) in the default engine
@@ -42,7 +46,12 @@ export function uniqueId(base: string, characters: Character[]): string {
 
 export function newCharacter(characters: Character[], template?: Character): Character {
   if (template) {
-    return { ...template, id: uniqueId(`${template.id}-copy`.slice(0, 64), characters), name: `${template.name} (copy)` };
+    return {
+      ...template,
+      id: uniqueId(`${template.id}-copy`.slice(0, 64), characters),
+      name: `${template.name} (copy)`,
+      voice: { ...template.voice },
+    };
   }
   return {
     id: uniqueId("character", characters),
@@ -51,6 +60,7 @@ export function newCharacter(characters: Character[], template?: Character): Cha
     speaker: DEFAULT_SPEAKER,
     persona: DEFAULT_PERSONA,
     llmModel: "",
+    voice: {},
   };
 }
 
@@ -70,6 +80,7 @@ export function migrateCharacter(legacy: LegacySettings): Character {
     speaker: typeof legacy.speaker === "number" ? legacy.speaker : DEFAULT_SPEAKER,
     persona: typeof legacy.llmSystemPrompt === "string" ? legacy.llmSystemPrompt : DEFAULT_PERSONA,
     llmModel: "",
+    voice: {},
   };
 }
 
@@ -88,6 +99,7 @@ export function sanitizeCharacters(stored: unknown): Character[] {
       speaker: typeof c.speaker === "number" ? c.speaker : DEFAULT_SPEAKER,
       persona: typeof c.persona === "string" ? c.persona : "",
       llmModel: typeof c.llmModel === "string" ? c.llmModel : "",
+      voice: sanitizeVoice(c.voice),
     });
   }
   return out;
