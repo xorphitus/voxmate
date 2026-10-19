@@ -6,16 +6,18 @@
 //! `application/json` bodies, which browsers cannot send cross-origin without
 //! a CORS preflight that this server never approves.
 
-use std::net::{Ipv4Addr, TcpListener};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -50,8 +52,27 @@ pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
     })
 }
 
+/// One stderr line per accepted request. Lets a client that re-sends text be
+/// told apart from the app speaking something twice. The text itself is not
+/// logged, only its length and hash.
+fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
+    let mut hasher = DefaultHasher::new();
+    req.text.hash(&mut hasher);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    let client = client.map_or_else(|| "unknown".to_string(), |addr| addr.to_string());
+    eprintln!(
+        "[{now:.3}] POST /speak from {client}: {} chars, hash {:016x}, speaker {:?}",
+        req.text.chars().count(),
+        hasher.finish(),
+        req.speaker,
+    );
+}
+
 async fn speak(
     State(sink): State<SpeakSink>,
+    client: Option<Extension<ConnectInfo<SocketAddr>>>,
     body: Result<Json<SpeakRequest>, JsonRejection>,
 ) -> Response {
     let Json(req) = match body {
@@ -60,6 +81,7 @@ async fn speak(
     };
     match validate(req) {
         Ok(req) => {
+            log_request(client.map(|Extension(ConnectInfo(addr))| addr), &req);
             sink(req);
             (StatusCode::ACCEPTED, Json(json!({ "status": "queued" }))).into_response()
         }
@@ -109,7 +131,8 @@ pub fn bind(port: u16) -> std::io::Result<TcpListener> {
 /// Must be called from inside a tokio runtime.
 pub async fn serve(listener: TcpListener, sink: SpeakSink) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::from_std(listener)?;
-    axum::serve(listener, router(sink)).await
+    let app = router(sink).into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, app).await
 }
 
 #[cfg(test)]

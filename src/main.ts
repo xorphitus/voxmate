@@ -46,7 +46,9 @@ async function main() {
       return { buffer: await player.decode(wav), timeline: buildTimeline(query) };
     },
     async play(p) {
-      await player.resume();
+      if (!(await player.resume())) {
+        throw new Error("audio is suspended. Click the window to enable sound, then send it again");
+      }
       driver.setTimeline(p.timeline);
       try {
         await player.play(p.buffer);

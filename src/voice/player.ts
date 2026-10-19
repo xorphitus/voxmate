@@ -18,11 +18,27 @@ export class AudioPlayer {
     this.samples = new Float32Array(this.analyser.fftSize);
     this.gain.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
+    // A context suspended mid-utterance (device change, system sleep) would
+    // finish it whenever it resumes, possibly much later. Drop it instead.
+    this.ctx.addEventListener("statechange", () => {
+      if (this.ctx.state !== "running") this.stop();
+    });
   }
 
-  /** Autoplay policies may start the context suspended; call on user gestures too. */
-  async resume(): Promise<void> {
-    if (this.ctx.state === "suspended") await this.ctx.resume();
+  /**
+   * Autoplay policies may start the context suspended; call on user gestures
+   * too. `ctx.resume()` can wait for a gesture indefinitely, so this gives up
+   * after `timeoutMs` and reports whether audio is running, letting callers
+   * drop an utterance instead of speaking it at some later click.
+   */
+  async resume(timeoutMs = 1000): Promise<boolean> {
+    if (this.ctx.state !== "running") {
+      await Promise.race([
+        this.ctx.resume().catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+      ]);
+    }
+    return this.ctx.state === "running";
   }
 
   setVolume(volume: number): void {
