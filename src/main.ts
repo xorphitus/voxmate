@@ -13,6 +13,7 @@ import { LlmSource } from "./llm/LlmSource";
 import { LocalApiSource, reportLineEvent, reportLogEntry } from "./speech/LocalApiSource";
 import type { TextSource } from "./speech/TextSource";
 import { ConversationLog } from "./stage/ConversationLog";
+import { addressed, Orchestrator } from "./stage/Orchestrator";
 import { StagePlayer } from "./stage/StagePlayer";
 import { Controls, type SimpleSetting } from "./ui/controls";
 import { followTheme } from "./ui/theme";
@@ -247,6 +248,9 @@ async function main() {
         case "alwaysOnTop":
           await getCurrentWindow().setAlwaysOnTop(value as boolean);
           break;
+        case "llmMode":
+          if (value !== "free") orchestrator.stop();
+          break;
         case "theme":
           await config.set(key, value);
           applyTheme();
@@ -280,6 +284,30 @@ async function main() {
 
   const llm = new LlmSource({ agent, log, onError: (e) => controls.error(`LLM: ${errorText(e)}`) });
 
+  /** Everyone set up takes part in free talk until #16 puts several on stage. */
+  const participants = () => characters().map(({ id, name }) => ({ id, name }));
+
+  const orchestrator = new Orchestrator({
+    participants,
+    log: () => log.entries(),
+    respond: (id, signal, pending) => llm.respond(id, { signal, pending }),
+    onLineEvent: (listener) => stagePlayer.subscribe(listener),
+    skipQueued: (match) => stagePlayer.skipQueued(match),
+    direct: (text) => {
+      const line = { id: crypto.randomUUID(), character: "", text, source: "ui", direction: true };
+      log.record({ line, state: "done" });
+    },
+    onStateChange: (state) => controls.setFreeState(state),
+  });
+
+  function startFree(topic = "") {
+    orchestrator.start({
+      maxTurns: config.get("freeMaxTurns"),
+      maxMinutes: config.get("freeMaxMinutes"),
+      topic,
+    });
+  }
+
   function ask(text: string) {
     if (!llmModel()) {
       controls.error("Set an LLM model in Settings first.");
@@ -287,17 +315,39 @@ async function main() {
     }
     // A new question replaces whatever is still being said.
     stagePlayer.clear();
-    controls.info(`Asking ${llmModel()}…`);
-    void llm.ask(text);
+    if (config.get("llmMode") === "free") {
+      // The user joins the conversation; the next turn answers them.
+      log.recordUser(text, "ui");
+      if (orchestrator.current.running) orchestrator.interject();
+      else startFree();
+      return;
+    }
+    const speaker = addressed(text, participants()) ?? onStage().id;
+    controls.info(`Asking ${characters().find((c) => c.id === speaker)?.name ?? speaker}…`);
+    void llm.ask(text, speaker);
+  }
+
+  function toggleFree(topic: string) {
+    if (orchestrator.current.running) {
+      orchestrator.stop();
+    } else if (!llmModel()) {
+      controls.error("Set an LLM model in Settings first.");
+    } else if (participants().length < 2) {
+      controls.error("Free talk needs at least two characters. Add one in Settings.");
+    } else {
+      startFree(topic);
+    }
   }
 
   const controls = new Controls(config.all(), {
     stop: () => {
+      orchestrator.stop();
       llm.cancel();
       cancelAllGenerations();
       stagePlayer.clear();
     },
     ask,
+    toggleFree,
     loadModel: () => void pickModel(),
     refreshSpeakers: () => void refreshSpeakers(),
     change: (key, value) => void change(key, value),

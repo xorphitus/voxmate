@@ -127,3 +127,24 @@ describe("LlmSource", () => {
     expect(onError).toHaveBeenCalledWith(new Error("boom"));
   });
 });
+
+describe("LlmSource.respond", () => {
+  it("returns the queued lines and sees lines that are queued but not heard yet", async () => {
+    const { source, requests } = setup([["はい。"]]);
+    const pending = [{ lineId: "p1", character: "metan", text: "まだ再生中ですわ", source: "llm", time: 0 }];
+    const lines = await source.respond("zunda", { pending });
+    expect(lines.map((l) => [l.text, l.character])).toEqual([["はい。", "zunda"]]);
+    expect(requests[0].slice(1)).toEqual([{ role: "user", content: "めたん: まだ再生中ですわ" }]);
+  });
+
+  it("stops when the caller's signal aborts", async () => {
+    const { source, said, onError } = setup([["一。", "二。", "三。"]]);
+    const controller = new AbortController();
+    const done = source.respond("zunda", { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    await done;
+    expect(said.length).toBeLessThan(3);
+    expect(onError).not.toHaveBeenCalled();
+  });
+});

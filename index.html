@@ -30,6 +30,17 @@
       </form>
 
       <div class="row">
+        <select id="llm-mode" aria-label="LLM mode" title="How characters use the LLM">
+          <option value="off">LLM off</option>
+          <option value="reply">Reply</option>
+          <option value="free">Free talk</option>
+        </select>
+        <input id="topic" type="text" placeholder="Topic or situation (optional)" />
+        <button type="button" id="free-toggle" title="Let the characters talk with each other">Start</button>
+        <span id="turn-info"></span>
+      </div>
+
+      <div class="row">
         <select id="character" aria-label="Character on stage"></select>
         <select id="speaker" aria-label="Speaker"></select>
         <button type="button" id="refresh-speakers" title="Reload speakers">↻</button>
@@ -94,6 +105,12 @@
 
           <label for="llm-history">History</label>
           <div><input id="llm-history" type="number" min="0" max="200" /> <small>recent lines of the conversation log</small></div>
+
+          <span>Free talk</span>
+          <div>
+            <label>Up to <input id="free-max-turns" type="number" min="1" max="500" /> turns</label>
+            <label>and <input id="free-max-minutes" type="number" min="1" max="600" /> minutes</label>
+          </div>
 
           <span>Local API</span>
           <div>

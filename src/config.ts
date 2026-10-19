@@ -25,7 +25,14 @@ export interface Settings {
   llmModel: string;
   /** Recent conversation-log lines (each sentence is one) sent as context. */
   llmHistory: number;
+  /** `off`: Ask is disabled. `reply`: the character named in the question (else the one on stage) answers. `free`: characters keep talking with each other. */
+  llmMode: LlmMode;
+  /** Limits of one free conversation. */
+  freeMaxTurns: number;
+  freeMaxMinutes: number;
 }
+
+export type LlmMode = "off" | "reply" | "free";
 
 export const DEFAULT_SETTINGS: Settings = {
   voicevoxUrl: "http://127.0.0.1:50021",
@@ -40,6 +47,9 @@ export const DEFAULT_SETTINGS: Settings = {
   llmUrl: "http://127.0.0.1:8080", // llama-swap's default listen address
   llmModel: "",
   llmHistory: 40,
+  llmMode: "reply",
+  freeMaxTurns: 20,
+  freeMaxMinutes: 10,
 };
 
 export const SETTINGS_FILE = "settings.json";

@@ -1,5 +1,6 @@
 import type { Character } from "../characters";
-import type { Settings } from "../config";
+import type { LlmMode, Settings } from "../config";
+import type { OrchestratorState, StopReason } from "../stage/Orchestrator";
 import type { LineSink, TextSource } from "../speech/TextSource";
 import { inRange, VOICE_FIELDS, VOICE_RANGES, type VoiceField } from "../voice/params";
 import type { Speaker } from "../voice/voicevox";
@@ -12,6 +13,8 @@ export interface ControlHandlers {
   stop(): void;
   /** Send the text to the LLM; its reply is spoken. */
   ask(text: string): void;
+  /** Start a free conversation (or stop the running one). */
+  toggleFree(topic: string): void;
   /** Pick a model file for the character on stage. */
   loadModel(): void;
   refreshSpeakers(): void;
@@ -58,6 +61,12 @@ export class Controls implements TextSource {
   private readonly llmUrl = $<HTMLInputElement>("llm-url");
   private readonly llmModel = $<HTMLInputElement>("llm-model");
   private readonly llmHistory = $<HTMLInputElement>("llm-history");
+  private readonly llmMode = $<HTMLSelectElement>("llm-mode");
+  private readonly topic = $<HTMLInputElement>("topic");
+  private readonly freeToggle = $<HTMLButtonElement>("free-toggle");
+  private readonly turnInfo = $<HTMLSpanElement>("turn-info");
+  private readonly freeMaxTurns = $<HTMLInputElement>("free-max-turns");
+  private readonly freeMaxMinutes = $<HTMLInputElement>("free-max-minutes");
   private readonly apiEnabled = $<HTMLInputElement>("api-enabled");
   private readonly apiPort = $<HTMLInputElement>("api-port");
   private readonly apiStatus = $<HTMLParagraphElement>("api-status");
@@ -80,6 +89,10 @@ export class Controls implements TextSource {
     this.llmUrl.value = settings.llmUrl;
     this.llmModel.value = settings.llmModel;
     this.llmHistory.value = String(settings.llmHistory);
+    this.llmMode.value = settings.llmMode;
+    this.freeMaxTurns.value = String(settings.freeMaxTurns);
+    this.freeMaxMinutes.value = String(settings.freeMaxMinutes);
+    this.showMode(settings.llmMode);
     this.apiEnabled.checked = settings.apiEnabled;
     this.apiPort.value = String(settings.apiPort);
     document.body.classList.toggle("transparent", settings.transparent);
@@ -131,6 +144,22 @@ export class Controls implements TextSource {
     this.theme.addEventListener("change", () => handlers.change("theme", this.theme.value as ThemePreference));
     this.llmUrl.addEventListener("change", () => handlers.change("llmUrl", this.llmUrl.value.trim()));
     this.llmModel.addEventListener("change", () => handlers.change("llmModel", this.llmModel.value.trim()));
+    this.llmMode.addEventListener("change", () => {
+      const mode = this.llmMode.value as LlmMode;
+      this.showMode(mode);
+      handlers.change("llmMode", mode);
+    });
+    this.freeToggle.addEventListener("click", () => handlers.toggleFree(this.topic.value));
+    this.freeMaxTurns.addEventListener("change", () => {
+      const n = Number(this.freeMaxTurns.value);
+      if (Number.isInteger(n) && n >= 1 && n <= 500) handlers.change("freeMaxTurns", n);
+      else this.error("Free talk turns must be between 1 and 500.");
+    });
+    this.freeMaxMinutes.addEventListener("change", () => {
+      const n = Number(this.freeMaxMinutes.value);
+      if (Number.isInteger(n) && n >= 1 && n <= 600) handlers.change("freeMaxMinutes", n);
+      else this.error("Free talk minutes must be between 1 and 600.");
+    });
     this.llmHistory.addEventListener("change", () => {
       const count = Number(this.llmHistory.value);
       if (Number.isInteger(count) && count >= 0 && count <= 200) handlers.change("llmHistory", count);
@@ -240,6 +269,30 @@ export class Controls implements TextSource {
     if (speaking) parts.push("speaking…");
     if (pending) parts.push(`${pending} queued`);
     this.queueInfo.textContent = parts.join(", ");
+  }
+
+  /** Topic and Start only make sense for free talk; Ask is pointless with the LLM off. */
+  private showMode(mode: LlmMode): void {
+    this.topic.hidden = mode !== "free";
+    this.freeToggle.hidden = mode !== "free";
+    this.turnInfo.hidden = mode !== "free";
+    $<HTMLButtonElement>("ask").disabled = mode === "off";
+  }
+
+  setFreeState({ running, turns, paused, stopReason }: OrchestratorState): void {
+    const ended: Record<StopReason, string> = {
+      stopped: "stopped",
+      "max-turns": "turn limit reached",
+      "max-minutes": "time limit reached",
+      silent: "nobody had more to say",
+      "no-participants": "needs two characters",
+    };
+    this.freeToggle.textContent = running ? "Stop talk" : "Start";
+    this.turnInfo.textContent = running
+      ? `turn ${turns}${paused ? " (script playing)" : ""}`
+      : stopReason
+        ? `ended after ${turns} turns: ${ended[stopReason]}`
+        : "";
   }
 
   setApiStatus(text: string): void {

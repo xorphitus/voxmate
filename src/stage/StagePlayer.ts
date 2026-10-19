@@ -85,6 +85,13 @@ export class StagePlayer<P> {
     this.cancel((line) => line.sceneId === sceneId);
   }
 
+  /** Drops queued lines that match; the current line always finishes. */
+  skipQueued(match: (line: Line) => boolean): void {
+    const dropped = this.items.filter((i) => match(i.line));
+    this.items = this.items.filter((i) => !match(i.line));
+    for (const item of dropped) this.emit(item.line, "skipped");
+  }
+
   private insert(drafts: LineDraft[], position: QueuePosition): Line[] {
     const items: Item<P>[] = [];
     for (const draft of drafts) {

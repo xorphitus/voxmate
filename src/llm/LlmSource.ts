@@ -1,5 +1,6 @@
 import type { LineSink, TextSource } from "../speech/TextSource";
-import type { ConversationLog } from "../stage/ConversationLog";
+import type { ConversationLog, LogEntry } from "../stage/ConversationLog";
+import type { Line } from "../stage/Line";
 import type { LlmAgent } from "./LlmAgent";
 
 export interface LlmSourceDeps {
@@ -8,6 +9,13 @@ export interface LlmSourceDeps {
   /** Shared with the stage; replies are built from it and questions go into it. */
   log: ConversationLog;
   onError(error: unknown): void;
+}
+
+export interface RespondOptions {
+  /** Aborting it abandons this reply only. */
+  signal?: AbortSignal;
+  /** Lines queued but not heard yet (so not in the log), e.g. the previous turn still playing. */
+  pending?: LogEntry[];
 }
 
 /**
@@ -38,31 +46,44 @@ export class LlmSource implements TextSource {
     this.running.clear();
   }
 
-  /** The user asks; the character on stage answers. Replaces replies still being generated. */
-  async ask(question: string): Promise<void> {
+  /**
+   * The user asks; `characterId` (default: the one on stage) answers.
+   * Replaces replies still being generated.
+   */
+  async ask(question: string, characterId?: string): Promise<void> {
     this.cancel();
     this.deps.log.recordUser(question, "ui");
-    await this.respond();
+    await this.respond(characterId);
   }
 
   /**
    * Lets a character (default: the one on stage) speak next, from the log as
    * it is now. Several characters can generate at once.
    */
-  async respond(characterId?: string): Promise<void> {
+  async respond(characterId?: string, options: RespondOptions = {}): Promise<Line[]> {
     const controller = new AbortController();
     this.running.add(controller);
     const { signal } = controller;
+    const abort = () => controller.abort();
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) controller.abort();
+    const queued: Line[] = [];
     try {
       const agent = this.deps.agent(characterId);
-      for await (const line of agent.respond(this.deps.log.entries(), signal)) {
+      const logged = this.deps.log.entries();
+      const seen = new Set(logged.map((e) => e.lineId));
+      const context = [...logged, ...(options.pending ?? []).filter((e) => !seen.has(e.lineId))];
+      for await (const draft of agent.respond(context, signal)) {
         if (signal.aborted) break;
-        this.sink?.({ ...line, source: this.name });
+        const line = this.sink?.({ ...draft, source: this.name });
+        if (line) queued.push(line);
       }
     } catch (e) {
       if (!signal.aborted) this.deps.onError(e);
     } finally {
+      options.signal?.removeEventListener("abort", abort);
       this.running.delete(controller);
     }
+    return queued;
   }
 }

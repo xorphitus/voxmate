@@ -262,3 +262,19 @@ describe("StagePlayer", () => {
     error.mockRestore();
   });
 });
+
+describe("StagePlayer.skipQueued", () => {
+  it("drops matching queued lines but lets the current one finish", async () => {
+    const h = harness();
+    h.q.enqueue(draft("one", { source: "llm" }));
+    h.q.enqueue(draft("two", { source: "llm" }));
+    h.q.enqueue(draft("three", { source: "ui" }));
+    await flush();
+    h.q.skipQueued((l) => l.source === "llm");
+    expect(h.deps.stop).not.toHaveBeenCalled();
+    expect(h.states()).toContain("two:skipped");
+    h.finish();
+    await flush();
+    expect(h.played()).toEqual(["one", "three"]);
+  });
+});

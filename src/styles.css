@@ -246,3 +246,14 @@ small {
 .voice-grid input {
   width: 100%;
 }
+
+#turn-info {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#free-max-turns,
+#free-max-minutes {
+  width: 5em;
+}

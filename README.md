@@ -152,6 +152,13 @@ options.
   model… and the Character settings edit it. Its id is what `character` in
   `POST /speak` refers to. Settings from before characters existed (model,
   speaker, system prompt) become the `default` character on first start.
+- **LLM mode** (next to the character picker): **Reply** lets the character
+  named in the question answer (else the one on stage); **Free talk** lets the
+  characters talk with each other (optionally on a topic) until the turn or
+  time limit in Settings, Stop, or a turn with nothing to say. Asking during
+  free talk joins the conversation: the next turn answers you. A script from
+  the API pauses free talk: the current line finishes, then the scene plays,
+  then the conversation resumes with it in the log. **LLM off** disables Ask.
 - **Ask** sends the question to the character on stage's LLM agent. Every
   character answers from the shared conversation log: everything said on
   stage (by any character, a script or the user) in the last **History**
