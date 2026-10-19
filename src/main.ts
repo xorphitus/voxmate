@@ -7,7 +7,8 @@ import { assetUrl, createAvatar } from "./avatar/factory";
 import { type Character, idError, newCharacter, resolveCharacter } from "./characters";
 import { Config, type Settings } from "./config";
 import { LipSyncDriver } from "./lipsync/LipSyncDriver";
-import { OpenAiCompatibleProvider } from "./llm/LlmProvider";
+import { LlmAgent } from "./llm/LlmAgent";
+import { cancelAllGenerations, OpenAiCompatibleProvider } from "./llm/LlmProvider";
 import { LlmSource } from "./llm/LlmSource";
 import { LocalApiSource, reportLineEvent, reportLogEntry } from "./speech/LocalApiSource";
 import type { TextSource } from "./speech/TextSource";
@@ -72,10 +73,10 @@ async function main() {
     defaultCharacter: () => config.get("defaultCharacter"),
   });
   const log = new ConversationLog();
+  log.subscribe(reportLogEntry);
   stagePlayer.subscribe((event) => {
     reportLineEvent(event);
-    const entry = log.record(event);
-    if (entry) reportLogEntry(entry);
+    log.record(event);
     if (event.state === "failed") {
       controls.error(`Could not speak "${event.line.text.slice(0, 20)}": ${errorText(event.error)}`);
     }
@@ -264,11 +265,20 @@ async function main() {
 
   const llmModel = () => onStage().llmModel || config.get("llmModel");
 
-  const llm = new LlmSource(
-    new OpenAiCompatibleProvider(() => ({ url: config.get("llmUrl"), model: llmModel() })),
-    () => ({ systemPrompt: onStage().persona, history: config.get("llmHistory"), character: onStage().id }),
-    (e) => controls.error(`LLM: ${errorText(e)}`),
-  );
+  /** Each character answers with its own persona and, if set, its own model. */
+  function agent(characterId?: string) {
+    const character = resolveCharacter(characters(), config.get("defaultCharacter"), characterId);
+    const model = character.llmModel || config.get("llmModel");
+    return new LlmAgent({
+      character,
+      provider: new OpenAiCompatibleProvider(() => ({ url: config.get("llmUrl"), model })),
+      nameOf: (id) => characters().find((c) => c.id === id)?.name ?? id,
+      history: config.get("llmHistory"),
+      source: "llm",
+    });
+  }
+
+  const llm = new LlmSource({ agent, log, onError: (e) => controls.error(`LLM: ${errorText(e)}`) });
 
   function ask(text: string) {
     if (!llmModel()) {
@@ -284,6 +294,7 @@ async function main() {
   const controls = new Controls(config.all(), {
     stop: () => {
       llm.cancel();
+      cancelAllGenerations();
       stagePlayer.clear();
     },
     ask,

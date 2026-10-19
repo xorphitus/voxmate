@@ -849,6 +849,10 @@
           "direction": {
             "type": "boolean",
             "description": "A stage direction (logged, never spoken)."
+          },
+          "user": {
+            "type": "boolean",
+            "description": "Typed by the user (e.g. a question to a character), not performed."
           }
         }
       },

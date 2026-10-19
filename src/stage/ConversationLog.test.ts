@@ -43,3 +43,13 @@ describe("ConversationLog", () => {
     expect(log.entries(0)).toEqual([]);
   });
 });
+
+describe("ConversationLog.recordUser", () => {
+  it("records what the user typed, in order with performed lines", () => {
+    const log = new ConversationLog(() => 7);
+    log.record({ line: line("hi"), state: "done" });
+    const entry = log.recordUser("元気？", "ui");
+    expect(entry).toMatchObject({ character: "", text: "元気？", source: "ui", time: 7, user: true });
+    expect(log.entries().map((e) => e.text)).toEqual(["hi", "元気？"]);
+  });
+});

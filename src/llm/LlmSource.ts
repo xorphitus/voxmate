@@ -1,31 +1,27 @@
-import type { TextSource, LineSink } from "../speech/TextSource";
-import type { ChatMessage, LlmProvider } from "./LlmProvider";
-import { SentenceSplitter } from "./sentences";
-import { ThinkFilter } from "./think";
+import type { LineSink, TextSource } from "../speech/TextSource";
+import type { ConversationLog } from "../stage/ConversationLog";
+import type { LlmAgent } from "./LlmAgent";
 
-export interface LlmSourceOptions {
-  systemPrompt: string;
-  /** How many past messages (user + assistant) to send along; 0 forgets everything. */
-  history: number;
-  /** Who speaks the reply; omitted means the character on stage. */
-  character?: string;
+export interface LlmSourceDeps {
+  /** The agent for a character id, or for the character on stage. */
+  agent(characterId?: string): LlmAgent;
+  /** Shared with the stage; replies are built from it and questions go into it. */
+  log: ConversationLog;
+  onError(error: unknown): void;
 }
 
 /**
- * Turns questions into spoken replies. Each sentence is pushed to the sink as
- * soon as it is complete, so speech starts before the reply has finished.
+ * Turns questions into spoken replies by the characters' LLM agents. Each
+ * sentence is pushed to the sink as soon as it is complete, so speech starts
+ * before the reply has finished. Context comes from the conversation log, so
+ * a character also remembers scripted lines and other characters' lines.
  */
 export class LlmSource implements TextSource {
   readonly name = "llm";
   private sink: LineSink | null = null;
-  private history: ChatMessage[] = [];
-  private controller: AbortController | null = null;
+  private readonly running = new Set<AbortController>();
 
-  constructor(
-    private readonly provider: LlmProvider,
-    private readonly options: () => LlmSourceOptions,
-    private readonly onError: (error: unknown) => void,
-  ) {}
+  constructor(private readonly deps: LlmSourceDeps) {}
 
   start(sink: LineSink): void {
     this.sink = sink;
@@ -36,53 +32,37 @@ export class LlmSource implements TextSource {
     this.sink = null;
   }
 
-  /** Abandon the reply being generated; the part received so far stays in the history. */
+  /** Abandons every reply being generated; what was already spoken stays in the log. */
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    for (const controller of this.running) controller.abort();
+    this.running.clear();
   }
 
+  /** The user asks; the character on stage answers. Replaces replies still being generated. */
   async ask(question: string): Promise<void> {
     this.cancel();
-    const controller = new AbortController();
-    this.controller = controller;
-    const { signal } = controller;
-    const { systemPrompt, history, character } = this.options();
-    const messages: ChatMessage[] = [
-      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
-      ...this.recent(history),
-      { role: "user", content: question },
-    ];
-
-    const think = new ThinkFilter();
-    const splitter = new SentenceSplitter();
-    // Only the spoken part is kept, so reasoning does not fill the context.
-    let reply = "";
-    const say = (text: string) => {
-      if (!signal.aborted) this.sink?.({ text, ...(character && { character }), source: this.name });
-    };
-    const feed = (text: string) => {
-      reply += text;
-      splitter.push(text).forEach(say);
-    };
-    try {
-      for await (const delta of this.provider.chat(messages, signal)) feed(think.push(delta));
-      feed(think.flush());
-      const rest = splitter.flush();
-      if (rest) say(rest);
-    } catch (e) {
-      if (!signal.aborted) this.onError(e);
-    } finally {
-      if (reply.trim()) {
-        this.history.push({ role: "user", content: question }, { role: "assistant", content: reply });
-        this.history = this.recent(history);
-      }
-      if (this.controller === controller) this.controller = null;
-    }
+    this.deps.log.recordUser(question, "ui");
+    await this.respond();
   }
 
-  private recent(count: number): ChatMessage[] {
-    // slice(-0) would return everything.
-    return count > 0 ? this.history.slice(-count) : [];
+  /**
+   * Lets a character (default: the one on stage) speak next, from the log as
+   * it is now. Several characters can generate at once.
+   */
+  async respond(characterId?: string): Promise<void> {
+    const controller = new AbortController();
+    this.running.add(controller);
+    const { signal } = controller;
+    try {
+      const agent = this.deps.agent(characterId);
+      for await (const line of agent.respond(this.deps.log.entries(), signal)) {
+        if (signal.aborted) break;
+        this.sink?.({ ...line, source: this.name });
+      }
+    } catch (e) {
+      if (!signal.aborted) this.deps.onError(e);
+    } finally {
+      this.running.delete(controller);
+    }
   }
 }

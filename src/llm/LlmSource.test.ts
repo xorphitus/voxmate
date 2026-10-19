@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { ConversationLog } from "../stage/ConversationLog";
 import type { LineDraft } from "../stage/Line";
+import type { AgentCharacter } from "./context";
+import { LlmAgent } from "./LlmAgent";
 import type { ChatMessage, LlmProvider } from "./LlmProvider";
 import { LlmSource } from "./LlmSource";
 
@@ -19,22 +22,56 @@ function fakeProvider(replies: string[][]) {
   return { provider, requests };
 }
 
-function setup(replies: string[][], history = 10, systemPrompt = "") {
-  const { provider, requests } = fakeProvider(replies);
+const zunda: AgentCharacter = { id: "zunda", name: "ずんだもん", persona: "語尾はなのだ" };
+const metan: AgentCharacter = { id: "metan", name: "めたん", persona: "お嬢様口調" };
+
+/** Every line the sink receives is "heard" at once, so it lands in the log. */
+function setup(replies: string[][], history = 20, provider = fakeProvider(replies)) {
+  const log = new ConversationLog(() => 0);
+  const characters = { zunda, metan };
   const onError = vi.fn();
-  const source = new LlmSource(provider, () => ({ systemPrompt, history }), onError);
+  const source = new LlmSource({
+    agent: (id = "zunda") =>
+      new LlmAgent({
+        character: characters[id as keyof typeof characters],
+        provider: provider.provider,
+        nameOf: (c) => characters[c as keyof typeof characters]?.name ?? c,
+        history,
+        source: "llm",
+      }),
+    log,
+    onError,
+  });
   const said: LineDraft[] = [];
-  source.start((u) => (said.push(u), null));
-  return { source, said, requests, onError };
+  let n = 0;
+  source.start((draft) => {
+    said.push(draft);
+    const line = { ...draft, id: `l${++n}`, character: draft.character ?? "zunda" };
+    log.record({ line, state: "done" });
+    return line;
+  });
+  return { source, said, log, requests: provider.requests, onError };
 }
 
 describe("LlmSource", () => {
-  it("speaks each sentence of the streamed reply", async () => {
+  it("speaks each sentence of the streamed reply as the character", async () => {
     const { source, said } = setup([["こんにちは。", "元気", "なのだ"]]);
     await source.ask("やあ");
     expect(said).toEqual([
-      { text: "こんにちは。", source: "llm" },
-      { text: "元気なのだ", source: "llm" },
+      { text: "こんにちは。", character: "zunda", source: "llm" },
+      { text: "元気なのだ", character: "zunda", source: "llm" },
+    ]);
+  });
+
+  it("logs the question and answers from the log", async () => {
+    const { source, requests, log } = setup([["一。"], ["二。"]]);
+    await source.ask("q1");
+    await source.ask("q2");
+    expect(log.entries().map((e) => e.text)).toEqual(["q1", "一。", "q2", "二。"]);
+    expect(requests[1].slice(1)).toEqual([
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "一。" },
+      { role: "user", content: "q2" },
     ]);
   });
 
@@ -43,34 +80,18 @@ describe("LlmSource", () => {
     await source.ask("q1");
     await source.ask("q2");
     expect(said.map((u) => u.text)).toEqual(["はい。", "b。"]);
-    expect(requests[1][1]).toEqual({ role: "assistant", content: "はい。" });
+    expect(requests[1][2]).toEqual({ role: "assistant", content: "はい。" });
   });
 
-  it("sends the system prompt and past turns", async () => {
-    const { source, requests } = setup([["一。"], ["二。"]], 10, "short answers");
-    await source.ask("q1");
-    await source.ask("q2");
-    expect(requests[1]).toEqual([
-      { role: "system", content: "short answers" },
-      { role: "user", content: "q1" },
-      { role: "assistant", content: "一。" },
-      { role: "user", content: "q2" },
+  it("lets each character answer in its own persona, knowing what the other said", async () => {
+    const { source, requests } = setup([["僕はずんだもんなのだ。"], ["わたくしはめたんですわ。"]]);
+    await source.ask("自己紹介して");
+    await source.respond("metan");
+    expect(requests[1][0].content).toContain("お嬢様口調");
+    expect(requests[1][0].content).toContain("You are めたん.");
+    expect(requests[1].slice(1)).toEqual([
+      { role: "user", content: "自己紹介して\nずんだもん: 僕はずんだもんなのだ。" },
     ]);
-  });
-
-  it("keeps only the configured number of past messages", async () => {
-    const { source, requests } = setup([["a。"], ["b。"], ["c。"]], 2);
-    await source.ask("1");
-    await source.ask("2");
-    await source.ask("3");
-    expect(requests[2].map((m) => m.content)).toEqual(["2", "b。", "3"]);
-  });
-
-  it("sends no history when it is 0", async () => {
-    const { source, requests } = setup([["a。"], ["b。"]], 0);
-    await source.ask("1");
-    await source.ask("2");
-    expect(requests[1]).toEqual([{ role: "user", content: "2" }]);
   });
 
   it("stops speaking once cancelled", async () => {
@@ -84,27 +105,25 @@ describe("LlmSource", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("runs replies of several characters at once, cancelling them all", async () => {
+    const { source, said } = setup([["あ。", "い。", "う。"], ["か。", "き。", "く。"]]);
+    const a = source.respond("zunda");
+    const b = source.respond("metan");
+    await Promise.resolve();
+    await Promise.resolve();
+    source.cancel();
+    await Promise.all([a, b]);
+    expect(said.length).toBeLessThan(6);
+  });
+
   it("reports provider errors", async () => {
     const provider: LlmProvider = {
       async *chat() {
         throw new Error("boom");
       },
     };
-    const onError = vi.fn();
-    const source = new LlmSource(provider, () => ({ systemPrompt: "", history: 10 }), onError);
-    source.start(() => null);
+    const { source, onError } = setup([], 20, { provider, requests: [] });
     await source.ask("q");
     expect(onError).toHaveBeenCalledWith(new Error("boom"));
-  });
-});
-
-describe("LlmSource character", () => {
-  it("tags each sentence with the character who answers", async () => {
-    const { provider } = fakeProvider([["はい。"]]);
-    const source = new LlmSource(provider, () => ({ systemPrompt: "", history: 0, character: "zunda" }), vi.fn());
-    const said: LineDraft[] = [];
-    source.start((u) => (said.push(u), null));
-    await source.ask("やあ");
-    expect(said).toEqual([{ text: "はい。", character: "zunda", source: "llm" }]);
   });
 });

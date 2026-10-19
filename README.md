@@ -152,6 +152,13 @@ options.
   model… and the Character settings edit it. Its id is what `character` in
   `POST /speak` refers to. Settings from before characters existed (model,
   speaker, system prompt) become the `default` character on first start.
+- **Ask** sends the question to the character on stage's LLM agent. Every
+  character answers from the shared conversation log: everything said on
+  stage (by any character, a script or the user) in the last **History**
+  lines, so characters can refer to each other's lines. Its persona is the
+  system prompt. With llama-swap, characters on different models swap models
+  on every turn unless the models are kept loaded together (a llama-swap
+  group); one model with different personas avoids that.
 - **Always on top** takes effect immediately.
 - **Transparent background** needs a restart. On macOS it uses the private
   API (`macOSPrivateApi`). On Linux it only works under a compositing window manager.

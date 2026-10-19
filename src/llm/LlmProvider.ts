@@ -80,3 +80,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     }
   }
 }
+
+/** Aborts every generation running in Rust, including any whose stream was already dropped. */
+export function cancelAllGenerations(): void {
+  void invoke("llm_cancel_all");
+}

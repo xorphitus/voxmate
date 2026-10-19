@@ -3,6 +3,7 @@ mod llm;
 mod stage;
 mod voicevox;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -97,12 +98,13 @@ enum LlmEvent {
     Error { message: String },
 }
 
-/// The generation in flight and its request id, so Stop (or a new question)
-/// can abort it without touching a newer one.
+/// Generations in flight by request id. Several can run at once (e.g. one
+/// character preparing its turn while another speaks); each is cancelled on
+/// its own, and Stop cancels them all.
 #[derive(Default)]
-struct LlmTask(Mutex<Option<(u32, tauri::async_runtime::JoinHandle<()>)>>);
+struct LlmTasks(Arc<Mutex<HashMap<u32, tauri::async_runtime::JoinHandle<()>>>>);
 
-/// Streams a chat completion into `on_event`. Replaces any running one.
+/// Streams a chat completion into `on_event`.
 #[tauri::command]
 fn llm_chat(
     id: u32,
@@ -111,9 +113,12 @@ fn llm_chat(
     messages: Vec<ChatMessage>,
     on_event: Channel<LlmEvent>,
     client: State<'_, Arc<LlmClient>>,
-    task: State<'_, LlmTask>,
+    tasks: State<'_, LlmTasks>,
 ) {
     let client = Arc::clone(&client);
+    let running = Arc::clone(&tasks.0);
+    // Held while spawning, so the task can't remove itself before it is inserted.
+    let mut map = tasks.0.lock().unwrap();
     let handle = tauri::async_runtime::spawn(async move {
         let result = client
             .chat(&url, &model, &messages, |text| {
@@ -124,19 +129,24 @@ fn llm_chat(
             Ok(()) => LlmEvent::Done,
             Err(e) => LlmEvent::Error { message: e.to_string() },
         });
+        running.lock().unwrap().remove(&id);
     });
-    if let Some((_, previous)) = task.0.lock().unwrap().replace((id, handle)) {
+    if let Some(previous) = map.insert(id, handle) {
         previous.abort();
     }
 }
 
 #[tauri::command]
-fn llm_cancel(id: u32, task: State<'_, LlmTask>) {
-    let mut current = task.0.lock().unwrap();
-    if current.as_ref().is_some_and(|(running, _)| *running == id) {
-        if let Some((_, handle)) = current.take() {
-            handle.abort();
-        }
+fn llm_cancel(id: u32, tasks: State<'_, LlmTasks>) {
+    if let Some(handle) = tasks.0.lock().unwrap().remove(&id) {
+        handle.abort();
+    }
+}
+
+#[tauri::command]
+fn llm_cancel_all(tasks: State<'_, LlmTasks>) {
+    for (_, handle) in tasks.0.lock().unwrap().drain() {
+        handle.abort();
     }
 }
 
@@ -290,7 +300,7 @@ pub fn run() {
             let client = Arc::new(client);
             app.manage(client.clone());
             app.manage(Arc::new(LlmClient::new()?));
-            app.manage(LlmTask::default());
+            app.manage(LlmTasks::default());
             app.manage(StageReady::default());
             app.manage(Arc::new(StageTracker::default()));
             app.manage(Mutex::new(start_api(&handle, &settings)));
@@ -312,6 +322,7 @@ pub fn run() {
             set_voicevox_url,
             llm_chat,
             llm_cancel,
+            llm_cancel_all,
             allow_model_file,
             api_status,
             stage_ready,

@@ -76,6 +76,9 @@ pub struct LogEntry {
     /// A stage direction (logged, never spoken).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direction: bool,
+    /// Typed by the user (e.g. a question to a character), not performed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub user: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -134,7 +134,7 @@ export class Controls implements TextSource {
     this.llmHistory.addEventListener("change", () => {
       const count = Number(this.llmHistory.value);
       if (Number.isInteger(count) && count >= 0 && count <= 200) handlers.change("llmHistory", count);
-      else this.error("History must be between 0 and 200 messages.");
+      else this.error("History must be between 0 and 200 lines.");
     });
     this.apiEnabled.addEventListener("change", () => handlers.change("apiEnabled", this.apiEnabled.checked));
     this.apiPort.addEventListener("change", () => {

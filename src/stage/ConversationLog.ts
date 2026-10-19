@@ -12,6 +12,8 @@ export interface LogEntry {
   /** Stopped partway; listeners may not have heard all of `text`. */
   interrupted?: boolean;
   direction?: boolean;
+  /** Typed by the user (e.g. a question to a character), not performed. */
+  user?: boolean;
 }
 
 export const MAX_LOG_ENTRIES = 1000;
@@ -23,6 +25,7 @@ export const MAX_LOG_ENTRIES = 1000;
  */
 export class ConversationLog {
   private log: LogEntry[] = [];
+  private listeners = new Set<(entry: LogEntry) => void>();
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -42,9 +45,25 @@ export class ConversationLog {
     if (line.sceneId !== undefined) entry.sceneId = line.sceneId;
     if (state === "interrupted") entry.interrupted = true;
     if (line.direction) entry.direction = true;
+    return this.push(entry);
+  }
+
+  private push(entry: LogEntry): LogEntry {
     this.log.push(entry);
     if (this.log.length > this.max) this.log.splice(0, this.log.length - this.max);
+    for (const listener of this.listeners) listener(entry);
     return entry;
+  }
+
+  /** Records something the user typed, e.g. a question, so characters can answer it. */
+  recordUser(text: string, source: string): LogEntry {
+    return this.push({ lineId: crypto.randomUUID(), character: "", text, source, time: this.now(), user: true });
+  }
+
+  /** Called with every entry as it is added. */
+  subscribe(listener: (entry: LogEntry) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** The most recent `count` entries (all if omitted), oldest first. */

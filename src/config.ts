@@ -23,7 +23,7 @@ export interface Settings {
   llmUrl: string;
   /** Used unless the character overrides it. */
   llmModel: string;
-  /** Past messages sent with each question. */
+  /** Recent conversation-log lines (each sentence is one) sent as context. */
   llmHistory: number;
 }
 
@@ -39,7 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
   llmUrl: "http://127.0.0.1:8080", // llama-swap's default listen address
   llmModel: "",
-  llmHistory: 20,
+  llmHistory: 40,
 };
 
 export const SETTINGS_FILE = "settings.json";
