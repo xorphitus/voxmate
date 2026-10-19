@@ -15,6 +15,7 @@ export interface ControlHandlers {
   ask(text: string): void;
   /** Start a free conversation (or stop the running one). */
   toggleFree(topic: string): void;
+  openEditor(): void;
   /** Pick a model file for the character on stage. */
   loadModel(): void;
   refreshSpeakers(): void;
@@ -119,6 +120,7 @@ export class Controls implements TextSource {
       this.text.value = "";
     });
     $("load-model").addEventListener("click", () => handlers.loadModel());
+    $("open-editor").addEventListener("click", () => handlers.openEditor());
     this.placeholderLoad.addEventListener("click", () => handlers.loadModel());
     $("refresh-speakers").addEventListener("click", () => handlers.refreshSpeakers());
 

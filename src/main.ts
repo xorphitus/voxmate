@@ -1,5 +1,6 @@
 import "./styles.css";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { assetUrl, createAvatar } from "./avatar/factory";
@@ -15,6 +16,8 @@ import type { TextSource } from "./speech/TextSource";
 import { ConversationLog } from "./stage/ConversationLog";
 import { addressed, Orchestrator } from "./stage/Orchestrator";
 import { StagePlayer } from "./stage/StagePlayer";
+import type { Scene } from "./stage/Line";
+import { EDITOR_PLAY, EDITOR_STOP, type EditorPlay, type EditorStop, STAGE_LINE, type StageLine } from "./editor/bridge";
 import { Controls, type SimpleSetting } from "./ui/controls";
 import { followTheme } from "./ui/theme";
 import { AudioPlayer } from "./voice/player";
@@ -123,6 +126,14 @@ async function main() {
   log.subscribe(reportLogEntry);
   stagePlayer.subscribe((event) => {
     reportLineEvent(event);
+    const { line, state, error } = event;
+    const forEditor: StageLine = {
+      lineId: line.id,
+      state,
+      ...(line.sceneId && { sceneId: line.sceneId }),
+      ...(error !== undefined && { error: errorText(error) }),
+    };
+    void emit(STAGE_LINE, forEditor);
     log.record(event);
     if (event.state === "failed") {
       controls.error(`Could not speak "${event.line.text.slice(0, 20)}": ${errorText(event.error)}`);
@@ -382,6 +393,7 @@ async function main() {
     },
     ask,
     toggleFree,
+    openEditor: () => void invoke("open_editor").catch((e) => controls.error(errorText(e))),
     loadModel: () => void pickModel(),
     refreshSpeakers: () => void refreshSpeakers(),
     change: (key, value) => void change(key, value),
@@ -400,6 +412,13 @@ async function main() {
 
   const sources: TextSource[] = [controls, new LocalApiSource(stagePlayer), llm];
   for (const source of sources) await source.start((line) => stagePlayer.enqueue(line));
+
+  // The scene editor window plays through this stage.
+  await listen<EditorPlay>(EDITOR_PLAY, ({ payload }) => {
+    const lines = payload.lines as unknown as Scene["lines"];
+    stagePlayer.enqueueScene({ id: payload.sceneId, source: "editor", lines }, "end");
+  });
+  await listen<EditorStop>(EDITOR_STOP, ({ payload }) => stagePlayer.cancelScene(payload.sceneId));
 
   const api = await invoke<ApiStatus>("api_status");
   controls.setApiStatus(

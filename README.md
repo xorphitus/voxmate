@@ -180,6 +180,11 @@ options.
   system prompt. With llama-swap, characters on different models swap models
   on every turn unless the models are kept loaded together (a llama-swap
   group); one model with different personas avoids that.
+- **Editor…** opens the scene editor in its own window: one line per row with
+  its character, text, voice (the character's defaults show as placeholders),
+  expression, gesture and stage-direction flag. Play a line, play from a line
+  or play all; the line being spoken is highlighted. Scenes are saved as the
+  `POST /scenes` JSON, so a saved file can be posted from a script as is.
 - **Always on top** takes effect immediately.
 - **Transparent background** needs a restart. On macOS it uses the private
   API (`macOSPrivateApi`). On Linux it only works under a compositing window manager.

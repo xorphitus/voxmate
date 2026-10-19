@@ -150,6 +150,54 @@ fn llm_cancel_all(tasks: State<'_, LlmTasks>) {
     }
 }
 
+/// Scene files are the scene API's JSON; anything bigger is not one.
+const MAX_SCENE_FILE_BYTES: u64 = api::MAX_BODY_BYTES as u64;
+
+/// Opens the scene editor in its own window, so the stage window can stay
+/// small and transparent. Focuses it if it is already open.
+#[tauri::command]
+fn open_editor(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("editor") {
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    WebviewWindowBuilder::new(&app, "editor", WebviewUrl::App("editor.html".into()))
+        .title("voxmate — Scene editor")
+        .inner_size(760.0, 640.0)
+        .min_inner_size(480.0, 320.0)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+fn scene_file_path(path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        return Err("scene files must be .json".into());
+    }
+    Ok(path)
+}
+
+/// Reads a scene file the user picked in the open dialog.
+#[tauri::command]
+fn read_scene_file(path: String) -> Result<String, String> {
+    let path = scene_file_path(&path)?;
+    let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+    if size > MAX_SCENE_FILE_BYTES {
+        return Err(format!("{} is too large for a scene file", path.display()));
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// Writes a scene file to the path the user picked in the save dialog.
+#[tauri::command]
+fn write_scene_file(path: String, contents: String) -> Result<(), String> {
+    let path = scene_file_path(&path)?;
+    if contents.len() as u64 > MAX_SCENE_FILE_BYTES {
+        return Err("the scene is too large to save".into());
+    }
+    std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
 /// Lets the asset protocol serve a user-picked model and the files next to it
 /// (textures, motions, physics...). The scope starts empty.
 #[tauri::command]
@@ -335,6 +383,9 @@ pub fn run() {
             stage_ready,
             stage_event,
             stage_capabilities,
+            open_editor,
+            read_scene_file,
+            write_scene_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxmate");

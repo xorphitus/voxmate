@@ -1,0 +1,99 @@
+/* The stage window hides overflow; the editor is a scrolling document. */
+html,
+body.editor {
+  height: auto;
+  min-height: 100%;
+  overflow: auto;
+}
+
+body.editor {
+  padding: 0 12px 24px;
+}
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 0;
+  background: var(--bg);
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+#lines {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: 8px;
+}
+
+.line .main,
+.line .voice,
+.line .actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.line .main .text {
+  flex: 1;
+  min-width: 12em;
+}
+
+.line .voice label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.line .voice input {
+  width: 5.5em;
+}
+
+.line .actions {
+  grid-row: span 2;
+  align-self: start;
+}
+
+.line.direction .text {
+  font-style: italic;
+}
+
+/* Playback state, from the stage window's line events. */
+.line.queued,
+.line.preparing {
+  border-left-color: var(--muted);
+}
+
+.line.speaking {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.line.failed {
+  border-left-color: var(--error);
+}
+
+#status.error {
+  color: var(--error);
+}

@@ -21,6 +21,8 @@ export default defineConfig({
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     // A local desktop app: the three/pixi chunks are big but load from disk.
     chunkSizeWarningLimit: 1000,
+    // The stage window and the scene editor window.
+    rollupOptions: { input: { main: "index.html", editor: "editor.html" } },
   },
   test: {
     include: ["src/**/*.test.ts"],
