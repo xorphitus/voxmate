@@ -1,6 +1,8 @@
+import type { Cue } from "../avatar/cues";
 import type { LogEntry } from "../stage/ConversationLog";
 import type { LineDraft } from "../stage/Line";
 import { type AgentCharacter, buildContext, stripOwnName } from "./context";
+import { extractCueTags } from "./cueTags";
 import type { LlmProvider } from "./LlmProvider";
 import { SentenceSplitter } from "./sentences";
 import { ThinkFilter } from "./think";
@@ -17,7 +19,8 @@ export interface LlmAgentOptions {
 
 /**
  * One character's LLM persona. It answers from the shared conversation log
- * and yields each sentence as a line as soon as it is complete.
+ * and yields each sentence as a line as soon as it is complete. Cue tags in
+ * the reply (`[happy]`) become the line's cues instead of being spoken.
  */
 export class LlmAgent {
   constructor(private readonly options: LlmAgentOptions) {}
@@ -28,10 +31,19 @@ export class LlmAgent {
     const think = new ThinkFilter();
     const splitter = new SentenceSplitter();
     let first = true;
-    const line = (text: string): LineDraft | null => {
-      if (first) text = stripOwnName(text, character.name);
+    /** Cues from a sentence that was only tags; they open the next line. */
+    let carried: Cue[] = [];
+    const line = (sentence: string): LineDraft | null => {
+      if (first) sentence = stripOwnName(sentence, character.name);
       first = false;
-      return text.trim() ? { text, character: character.id, source } : null;
+      const { text, cues } = character.cues ? extractCueTags(sentence, character.cues) : { text: sentence, cues: [] };
+      if (!text.trim()) {
+        carried.push(...cues.map((c) => ({ ...c, at: "start" as const })));
+        return null;
+      }
+      const all = [...carried, ...cues];
+      carried = [];
+      return { text, character: character.id, source, ...(all.length && { cues: all }) };
     };
 
     for await (const delta of provider.chat(messages, signal)) {

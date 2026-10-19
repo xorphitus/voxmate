@@ -1,10 +1,13 @@
 import type { LogEntry } from "../stage/ConversationLog";
+import { cueInstruction, type CueVocabulary } from "./cueTags";
 import type { ChatMessage } from "./LlmProvider";
 
 export interface AgentCharacter {
   id: string;
   name: string;
   persona: string;
+  /** Tags the character may write to act (see cueTags.ts); none if omitted. */
+  cues?: CueVocabulary;
 }
 
 /**
@@ -31,6 +34,7 @@ export function buildContext(
   const system = [
     self.persona.trim(),
     `You are ${self.name}. Lines from other characters start with their name and a colon; answer without one.`,
+    self.cues ? cueInstruction(self.cues) : "",
   ]
     .filter(Boolean)
     .join("\n\n");

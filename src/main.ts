@@ -9,7 +9,8 @@ import { Config, type Settings } from "./config";
 import { LlmAgent } from "./llm/LlmAgent";
 import { cancelAllGenerations, OpenAiCompatibleProvider } from "./llm/LlmProvider";
 import { LlmSource } from "./llm/LlmSource";
-import { LocalApiSource, reportLineEvent, reportLogEntry } from "./speech/LocalApiSource";
+import { LocalApiSource, reportCapabilities, reportLineEvent, reportLogEntry } from "./speech/LocalApiSource";
+import { PORTABLE_EXPRESSIONS, PORTABLE_GESTURES, scheduleCues } from "./avatar/cues";
 import type { TextSource } from "./speech/TextSource";
 import { ConversationLog } from "./stage/ConversationLog";
 import { addressed, Orchestrator } from "./stage/Orchestrator";
@@ -18,12 +19,14 @@ import { Controls, type SimpleSetting } from "./ui/controls";
 import { followTheme } from "./ui/theme";
 import { AudioPlayer } from "./voice/player";
 import { lineVoice } from "./voice/params";
-import { buildTimeline, type Segment } from "./voice/timeline";
+import { buildTimeline, phraseStarts, type Segment } from "./voice/timeline";
 import { fetchSpeakers, setVoicevoxUrl, synthesize } from "./voice/voicevox";
 
 interface Prepared {
   buffer: AudioBuffer;
   timeline: Segment[];
+  /** Accent phrase start times, for cues. */
+  phrases: number[];
 }
 
 interface ApiStatus {
@@ -68,6 +71,7 @@ async function main() {
 
   /** The big placeholder (with its Load button) is for a stage of one without a model. */
   function showStageState(members: MemberState[]) {
+    reportCapabilities(Object.fromEntries(members.flatMap((m) => (m.capabilities ? [[m.id, m.capabilities]] : []))));
     const loaded = members.some((m) => m.status === "loaded");
     if (loaded || members.length > 1) controls.setModelState("loaded");
     else if (members[0]?.status === "loading") controls.setModelState("loading", members[0].name);
@@ -85,7 +89,10 @@ async function main() {
     const byId = new Map(characters().map((c) => [c.id, c]));
     const members = config
       .get("stage")
-      .flatMap((id) => (byId.has(id) ? [{ id, name: byId.get(id)!.name, modelPath: byId.get(id)!.modelPath }] : []));
+      .flatMap((id) => {
+        const c = byId.get(id);
+        return c ? [{ id, name: c.name, modelPath: c.modelPath, names: c.names }] : [];
+      });
     return stageView.sync(members);
   }
 
@@ -95,14 +102,14 @@ async function main() {
       const voice = lineVoice(character.voice, line);
       const speaker = line.speaker ?? character.speaker;
       const { query, wav } = await synthesize(line.text, speaker, voice, line.audioQuery);
-      return { buffer: await player.decode(wav), timeline: buildTimeline(query) };
+      return { buffer: await player.decode(wav), timeline: buildTimeline(query), phrases: phraseStarts(query) };
     },
     async play(p, line) {
       if (!(await player.resume())) {
         throw new Error("audio is suspended. Click the window to enable sound, then send it again");
       }
       // Only the speaker's mouth moves; the others listen.
-      stageView.speak(line.character, p.timeline);
+      stageView.speak(line.character, p.timeline, scheduleCues(line.cues, line.emotion, p.phrases));
       try {
         await player.play(p.buffer);
       } finally {
@@ -293,8 +300,14 @@ async function main() {
   function agent(characterId?: string) {
     const character = resolveCharacter(characters(), config.get("defaultCharacter"), characterId);
     const model = character.llmModel || config.get("llmModel");
+    // Portable names always work; the model's own names once it is loaded on stage.
+    const own = stageView.state.find((m) => m.id === character.id)?.capabilities;
+    const cues = {
+      expressions: [...new Set([...PORTABLE_EXPRESSIONS, ...(own?.expressions ?? [])])],
+      gestures: [...new Set([...PORTABLE_GESTURES, ...(own?.gestures ?? [])])],
+    };
     return new LlmAgent({
-      character,
+      character: { ...character, cues },
       provider: new OpenAiCompatibleProvider(() => ({ url: config.get("llmUrl"), model })),
       nameOf: (id) => characters().find((c) => c.id === id)?.name ?? id,
       history: config.get("llmHistory"),

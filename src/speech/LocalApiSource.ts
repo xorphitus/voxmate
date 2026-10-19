@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AvatarCapabilities } from "../avatar/Avatar";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { Cue } from "../avatar/cues";
 import type { LogEntry } from "../stage/ConversationLog";
 import type { Line, LineDraft, LineEvent, QueuePosition, Scene } from "../stage/Line";
 import type { VoiceParams } from "../voice/params";
@@ -14,6 +16,8 @@ interface LineRequest {
   voice?: VoiceParams;
   audioQuery?: AudioQuery;
   direction?: boolean;
+  emotion?: string;
+  cues?: Cue[];
 }
 
 /** Mirrors `Submission` in src-tauri/src/api.rs. */
@@ -90,4 +94,9 @@ export function reportLineEvent({ line, state, error }: LineEvent): void {
 export function reportLogEntry(entry: LogEntry): void {
   const event: StageEvent = { type: "log", ...entry };
   invoke("stage_event", { event }).catch((e) => console.error("stage_event", e));
+}
+
+/** Tells the API what the loaded models can do, by character id, for `GET /characters`. */
+export function reportCapabilities(capabilities: Record<string, AvatarCapabilities>): void {
+  invoke("stage_capabilities", { capabilities }).catch((e) => console.error("stage_capabilities", e));
 }

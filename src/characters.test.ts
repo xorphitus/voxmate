@@ -6,6 +6,9 @@ import {
   idError,
   migrateCharacter,
   normalizeStage,
+  parseNames,
+  formatNames,
+  sanitizeNames,
   newCharacter,
   resolveCharacter,
   sanitizeCharacters,
@@ -20,6 +23,7 @@ const character = (id: string, speaker = 1): Character => ({
   persona: "",
   llmModel: "",
   voice: {},
+  names: {},
 });
 
 describe("migrateCharacter", () => {
@@ -32,6 +36,7 @@ describe("migrateCharacter", () => {
       persona: "be nice",
       llmModel: "",
       voice: {},
+      names: {},
     });
   });
 
@@ -44,7 +49,7 @@ describe("sanitizeCharacters", () => {
   it("drops malformed entries and duplicate ids, and fills missing fields", () => {
     const stored = [{ id: "a", speaker: 2, voice: { speed: 1.5, pitch: 9 } }, { id: "a" }, { id: "Bad id" }, null, "x", { name: "no id" }];
     expect(sanitizeCharacters(stored)).toEqual([
-      { id: "a", name: "a", modelPath: null, speaker: 2, persona: "", llmModel: "", voice: { speed: 1.5 } },
+      { id: "a", name: "a", modelPath: null, speaker: 2, persona: "", llmModel: "", voice: { speed: 1.5 }, names: {} },
     ]);
   });
 
@@ -113,5 +118,17 @@ describe("normalizeStage", () => {
     expect(normalizeStage(["c", "x", "c", 3, "a"], list, "a")).toEqual(["c", "a"]);
     expect(normalizeStage(["c"], list, "b")).toEqual(["c", "b"]);
     expect(normalizeStage(undefined, list, "a")).toEqual(["a"]);
+  });
+});
+
+describe("names", () => {
+  it("parses and formats the portable → model name map", () => {
+    expect(parseNames("happy=f01, nod = TapBody,bad, =x, a=b=c\nsad=f03")).toEqual({
+      happy: "f01",
+      nod: "TapBody",
+      sad: "f03",
+    });
+    expect(formatNames({ happy: "f01", nod: "TapBody" })).toBe("happy=f01, nod=TapBody");
+    expect(sanitizeNames({ happy: "f01", sad: "", x: 3 })).toEqual({ happy: "f01" });
   });
 });

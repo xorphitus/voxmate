@@ -1,4 +1,5 @@
 import type { AudioQuery } from "../voice/timeline";
+import type { Cue } from "../avatar/cues";
 import type { VoiceParams } from "../voice/params";
 
 /**
@@ -26,6 +27,10 @@ export interface Line {
   sceneId?: string;
   /** A stage direction is not spoken; it only goes into the conversation log. */
   direction?: boolean;
+  /** An expression held for the whole line. */
+  emotion?: string;
+  /** What the speaker does while speaking (see scheduleCues). */
+  cues?: Cue[];
 }
 
 /** What producers emit; the player assigns `id` and the default character. */

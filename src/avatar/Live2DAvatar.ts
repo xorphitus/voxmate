@@ -1,7 +1,11 @@
 import * as PIXI from "pixi.js";
 import type { Live2DModel } from "pixi-live2d-display/cubism4";
-import { closedMouth, type Avatar, type VowelWeights } from "./Avatar";
+import { closedMouth, type Avatar, type AvatarCapabilities, type LookTarget, type VowelWeights } from "./Avatar";
+import { gestureDuration, gestureOffset } from "./gestures";
 import { VOWELS, type Vowel } from "../voice/timeline";
+
+/** ParamAngle degrees at a procedural gesture's full extent. */
+const GESTURE_DEGREES = { pitch: 12, yaw: 18, roll: 12 };
 
 /**
  * Cubism Core can't be redistributed, so it isn't bundled. Users put it in
@@ -71,6 +75,19 @@ export function mouthParams(weights: VowelWeights, openness: number): { open: nu
 
 interface CoreModel {
   setParameterValueById(id: string, value: number, weight?: number): void;
+  addParameterValueById(id: string, value: number, weight?: number): void;
+}
+
+/** The parts of the model's internals this file uses (pixi-live2d-display keeps them loosely typed). */
+interface InternalModel {
+  coreModel: CoreModel;
+  motionManager: {
+    lipSyncIds?: string[];
+    expressionManager?: { resetExpression(): void };
+  };
+  focusController: { focus(x: number, y: number, instant?: boolean): void };
+  settings: { expressions?: { Name: string }[]; motions?: Record<string, unknown[]> };
+  on(event: "beforeModelUpdate", fn: () => void): void;
 }
 
 export class Live2DAvatar implements Avatar {
@@ -79,6 +96,7 @@ export class Live2DAvatar implements Avatar {
   private model: Live2DModel | null = null;
   private mouth = closedMouth();
   private openness = 0;
+  private gesturePlaying: { name: string; t: number } | null = null;
 
   constructor(container: HTMLElement) {
     this.app = new PIXI.Application<HTMLCanvasElement>({
@@ -101,11 +119,7 @@ export class Live2DAvatar implements Avatar {
       autoFocus: false,
     });
 
-    const internal = model.internalModel as unknown as {
-      coreModel: CoreModel;
-      motionManager: { lipSyncIds?: string[] };
-      on(event: "beforeModelUpdate", fn: () => void): void;
-    };
+    const internal = model.internalModel as unknown as InternalModel;
     const openIds = internal.motionManager.lipSyncIds?.length
       ? internal.motionManager.lipSyncIds
       : ["ParamMouthOpenY"];
@@ -114,6 +128,13 @@ export class Live2DAvatar implements Avatar {
       const { open, form } = mouthParams(this.mouth, this.openness);
       for (const id of openIds) internal.coreModel.setParameterValueById(id, open);
       internal.coreModel.setParameterValueById("ParamMouthForm", form);
+      // Procedural gestures go on top of motions, physics and focus.
+      const g = this.gesturePlaying && gestureOffset(this.gesturePlaying.name, this.gesturePlaying.t);
+      if (g) {
+        internal.coreModel.addParameterValueById("ParamAngleY", -g.pitch * GESTURE_DEGREES.pitch);
+        internal.coreModel.addParameterValueById("ParamAngleX", g.yaw * GESTURE_DEGREES.yaw);
+        internal.coreModel.addParameterValueById("ParamAngleZ", g.roll * GESTURE_DEGREES.roll);
+      }
     });
 
     this.app.stage.addChild(model);
@@ -126,8 +147,42 @@ export class Live2DAvatar implements Avatar {
     this.openness = openness;
   }
 
+  setExpression(name: string, _weight: number, _fadeSeconds: number): void {
+    // Live2D expressions fade by their own FadeInTime and have no weight.
+    const model = this.model;
+    if (!model) return;
+    if (name === "neutral") this.internal()?.motionManager.expressionManager?.resetExpression();
+    else if (this.capabilities().expressions.includes(name)) void model.expression(name);
+  }
+
+  gesture(name: string): void {
+    if (gestureDuration(name) !== undefined) this.gesturePlaying = { name, t: 0 };
+    else if (this.capabilities().gestures.includes(name)) void this.model?.motion(name);
+  }
+
+  lookAt(target: LookTarget | null): void {
+    this.internal()?.focusController.focus(target?.x ?? 0, target?.y ?? 0);
+  }
+
+  capabilities(): AvatarCapabilities {
+    const settings = this.internal()?.settings;
+    return {
+      expressions: ["neutral", ...(settings?.expressions ?? []).map((e) => e.Name)],
+      // Motion groups play a random motion of the group.
+      gestures: ["nod", "shake", "tilt", ...Object.keys(settings?.motions ?? {})],
+    };
+  }
+
   update(dt: number): void {
+    if (this.gesturePlaying) {
+      this.gesturePlaying.t += dt;
+      if (gestureOffset(this.gesturePlaying.name, this.gesturePlaying.t) === null) this.gesturePlaying = null;
+    }
     this.model?.update(dt * 1000);
+  }
+
+  private internal(): InternalModel | undefined {
+    return this.model?.internalModel as unknown as InternalModel | undefined;
   }
 
   resize(): void {

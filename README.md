@@ -112,6 +112,14 @@ curl -X POST localhost:50080/scenes -H 'content-type: application/json' \
 curl localhost:50080/scenes/<id>              # per-line state
 curl -X DELETE localhost:50080/scenes/<id>    # cancel the rest
 
+# Acting: an emotion held for the line, and cues at "start", "end", seconds or
+# an accent phrase ({"phrase": n}). Portable names (neutral happy sad angry
+# surprised relaxed; nod shake tilt) map to each model via "Model names" in the
+# Character settings; a model's own names (GET /characters) work too.
+curl -X POST localhost:50080/speak -H 'content-type: application/json' \
+  -d '{"text":"えっ、本当なのだ？","emotion":"surprised",
+       "cues":[{"at":{"phrase":1},"gesture":"tilt"},{"at":"end","lookAt":"metan"}]}'
+
 # Follow playback (Server-Sent Events): "line" events (queued, preparing,
 # speaking, done, interrupted, skipped, failed) and "log" entries for every
 # line, whoever produced it.
@@ -151,7 +159,10 @@ options.
   lines that name no character, picking it brings it on stage, and the speaker
   list, Load model… and the Character settings edit it. Several characters can
   be on stage at once, side by side (VRM and Live2D mixed); **On stage** in the
-  Character settings takes one off. Only the speaker's mouth moves. Each
+  Character settings takes one off. Only the speaker's mouth moves. The others
+  turn toward the speaker and sometimes nod when a line ends. LLM replies can
+  act too: characters may write tags like `[happy]` or `[nod]`, which are acted
+  out instead of spoken. Each
   character on stage is a WebGL canvas, so keep it to a handful. Its id is what `character` in
   `POST /speak` refers to. Settings from before characters existed (model,
   speaker, system prompt) become the `default` character on first start.

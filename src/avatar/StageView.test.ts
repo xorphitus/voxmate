@@ -1,14 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Segment } from "../voice/timeline";
-import type { Avatar, VowelWeights } from "./Avatar";
+import type { Avatar, LookTarget, VowelWeights } from "./Avatar";
+import { scheduleCues } from "./cues";
 import { planStage, type Slot, StageView } from "./StageView";
 
 function fakeAvatar(path: string) {
   const mouth: { weights: VowelWeights; openness: number }[] = [];
+  /** setExpression, gesture and lookAt calls, as strings. */
+  const acts: string[] = [];
   const avatar = {
     kind: "vrm" as const,
     path,
     mouth,
+    acts,
+    setExpression: (name: string) => acts.push(`expression:${name}`),
+    gesture: (name: string) => acts.push(`gesture:${name}`),
+    lookAt: (t: LookTarget | null) => acts.push(t ? `look:${t.x.toFixed(1)}` : "look:camera"),
+    capabilities: () => ({ expressions: ["neutral", "happy"], gestures: ["nod"] }),
     load: vi.fn(async () => {}),
     setMouth: (weights: VowelWeights, openness: number) => mouth.push({ weights: { ...weights }, openness }),
     update: vi.fn(),
@@ -18,7 +26,7 @@ function fakeAvatar(path: string) {
   return avatar satisfies Avatar;
 }
 
-function setup() {
+function setup(random = () => 1) {
   const slots: { label: string | null; error: boolean; place: [number, number]; removed: boolean }[] = [];
   const avatars: ReturnType<typeof fakeAvatar>[] = [];
   const pending = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
@@ -26,6 +34,7 @@ function setup() {
   const clock = { currentTime: 0.15, rms: () => 0.3 };
   const view = new StageView({
     clock,
+    random,
     createSlot: (): Slot => {
       const slot = { label: null as string | null, error: false, place: [0, 0] as [number, number], removed: false };
       slots.push(slot);
@@ -157,5 +166,72 @@ describe("StageView", () => {
     pending.get("/a.vrm")!.resolve();
     await loading;
     expect(avatars[0].dispose).toHaveBeenCalled();
+  });
+});
+
+describe("StageView performances", () => {
+  const trio = [
+    { id: "zunda", name: "Z", modelPath: "/z.vrm" },
+    { id: "metan", name: "M", modelPath: "/m.vrm", names: { happy: "joy", nod: "Nod" } },
+    { id: "tsumugi", name: "T", modelPath: "/t.vrm" },
+  ];
+
+  it("fires an expression and a gesture when an accent phrase starts", async () => {
+    const { view, avatars, clock } = setup();
+    await view.sync(trio);
+    const cues = scheduleCues([{ at: { phrase: 1 }, gesture: "nod" }], "happy", [0.1, 0.6]);
+    clock.currentTime = 0;
+    view.speak("metan", timeline, cues);
+    view.tick(1 / 60);
+    const metan = avatars[1];
+    // Mapped to the model's own names.
+    expect(metan.acts).toEqual(["expression:neutral", "look:camera", "expression:joy"]);
+    clock.currentTime = 0.5;
+    view.tick(1 / 60);
+    expect(metan.acts).not.toContain("gesture:Nod");
+    clock.currentTime = 0.6;
+    view.tick(1 / 60);
+    expect(metan.acts).toContain("gesture:Nod");
+  });
+
+  it("turns listeners toward the speaker", async () => {
+    const { view, avatars } = setup();
+    await view.sync(trio);
+    view.speak("tsumugi", timeline);
+    expect(avatars[0].acts).toEqual(["look:1.0"]);
+    expect(avatars[1].acts).toEqual(["look:0.6"]);
+    expect(avatars[2].acts).toContain("look:camera");
+    view.speak("zunda", timeline);
+    expect(last(avatars[2].acts)).toBe("look:-1.0");
+  });
+
+  it("fires end cues at the end, lets listeners nod, then relaxes after the hold", async () => {
+    const { view, avatars } = setup(() => 0);
+    await view.sync(trio.slice(0, 2));
+    view.speak("zunda", timeline, scheduleCues([{ at: "end", expression: "happy" }], undefined, []));
+    view.tick(1 / 60);
+    expect(avatars[0].acts).not.toContain("expression:happy");
+    view.silence();
+    expect(avatars[0].acts).toContain("expression:happy");
+    expect(avatars[1].acts).toContain("gesture:Nod");
+    expect(avatars[0].acts).not.toContain("gesture:nod");
+    for (let i = 0; i < 130; i++) view.tick(1 / 60);
+    expect(avatars[0].acts.slice(-2)).toEqual(["expression:neutral", "look:camera"]);
+    expect(avatars[1].acts.slice(-2)).toEqual(["expression:neutral", "look:camera"]);
+  });
+
+  it("looks at another member on a lookAt cue", async () => {
+    const { view, avatars, clock } = setup();
+    await view.sync(trio);
+    clock.currentTime = 0;
+    view.speak("zunda", timeline, scheduleCues([{ at: "start", lookAt: "tsumugi" }], undefined, []));
+    view.tick(1 / 60);
+    expect(last(avatars[0].acts)).toBe("look:1.0");
+  });
+
+  it("reports capabilities of loaded members", async () => {
+    const { view } = setup();
+    await view.sync(trio.slice(0, 1));
+    expect(view.state[0].capabilities).toEqual({ expressions: ["neutral", "happy"], gestures: ["nod"] });
   });
 });

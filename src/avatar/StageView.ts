@@ -1,12 +1,21 @@
 import { LipSyncDriver, type PlaybackClock } from "../lipsync/LipSyncDriver";
 import type { Segment } from "../voice/timeline";
-import type { Avatar } from "./Avatar";
+import type { Avatar, AvatarCapabilities, LookTarget } from "./Avatar";
+import { type Cue, modelName, type ScheduledCue } from "./cues";
+
+/** How long an expression, and a listener's gaze, stay after a line ends. */
+export const HOLD_SECONDS = 2;
+/** Chance that a listener nods when a line ends. */
+export const NOD_CHANCE = 0.4;
+const EXPRESSION_FADE = 0.3;
 
 /** A character as the stage shows it. */
 export interface MemberSpec {
   id: string;
   name: string;
   modelPath: string | null;
+  /** The character's model names for portable expressions and gestures, e.g. { happy: "f01" }. */
+  names?: Record<string, string>;
 }
 
 export type MemberStatus = "empty" | "loading" | "loaded" | "error";
@@ -16,6 +25,8 @@ export interface MemberState {
   name: string;
   status: MemberStatus;
   error?: string;
+  /** Once loaded. */
+  capabilities?: AvatarCapabilities;
 }
 
 /**
@@ -40,6 +51,7 @@ export interface StageViewDeps {
   /** Creates an avatar for `path` in `container` and loads the model. */
   loadAvatar(path: string, container: HTMLElement): Promise<Avatar>;
   onChange?(members: MemberState[]): void;
+  random?(): number;
 }
 
 interface Member {
@@ -51,6 +63,8 @@ interface Member {
   error?: string;
   /** Bumped per model change, so a slow load can't replace a newer one. */
   generation: number;
+  /** When (in stage time) to return to a neutral face and look at the camera again. */
+  resetAt?: number;
 }
 
 export interface StagePlan {
@@ -79,15 +93,23 @@ export function planStage(current: { id: string; modelPath: string | null }[], n
  */
 export class StageView {
   private members: Member[] = [];
+  /** Seconds of ticks, for holds. */
+  private elapsed = 0;
+  /** The line being spoken: its speaker and the cues not fired yet. */
+  private performance: { speaker: string; cues: ScheduledCue[] } | null = null;
+  private readonly random: () => number;
 
-  constructor(private readonly deps: StageViewDeps) {}
+  constructor(private readonly deps: StageViewDeps) {
+    this.random = deps.random ?? Math.random;
+  }
 
   get state(): MemberState[] {
-    return this.members.map(({ spec, status, error }) => ({
+    return this.members.map(({ spec, status, error, avatar }) => ({
       id: spec.id,
       name: spec.name,
       status,
       ...(error !== undefined && { error }),
+      ...(status === "loaded" && avatar && { capabilities: avatar.capabilities() }),
     }));
   }
 
@@ -122,20 +144,51 @@ export class StageView {
     await Promise.all(loads);
   }
 
-  /** Routes the timeline to `characterId`'s member; everyone else closes their mouth. */
-  speak(characterId: string, timeline: readonly Segment[]): void {
+  /**
+   * Routes the timeline to `characterId`'s member; everyone else closes their
+   * mouth and turns toward the speaker, who looks at the user. `cues` fire
+   * against the playback clock (see scheduleCues).
+   */
+  speak(characterId: string, timeline: readonly Segment[], cues: ScheduledCue[] = []): void {
+    this.firePending();
+    const speaker = this.member(characterId);
     for (const m of this.members) {
-      if (m.spec.id === characterId) m.driver.setTimeline(timeline);
-      else m.driver.clear();
+      m.resetAt = undefined;
+      if (m === speaker) {
+        m.driver.setTimeline(timeline);
+        m.avatar?.setExpression("neutral", 0, EXPRESSION_FADE);
+        m.avatar?.lookAt(null);
+      } else {
+        m.driver.clear();
+        if (speaker) m.avatar?.lookAt(this.direction(m, speaker));
+      }
+    }
+    this.performance = { speaker: characterId, cues: [...cues] };
+  }
+
+  /**
+   * The line ended: remaining cues fire, listeners sometimes nod, and after
+   * HOLD_SECONDS faces relax and everyone looks at the user again.
+   */
+  silence(): void {
+    const speaker = this.performance?.speaker;
+    this.firePending();
+    for (const m of this.members) {
+      m.driver.clear();
+      if (speaker !== undefined && m.spec.id !== speaker && this.random() < NOD_CHANCE) m.avatar?.gesture(modelName("nod", m.spec.names));
+      m.resetAt = this.elapsed + HOLD_SECONDS;
     }
   }
 
-  silence(): void {
-    for (const m of this.members) m.driver.clear();
-  }
-
   tick(dt: number): void {
+    this.elapsed += dt;
+    this.fireDue(this.deps.clock.currentTime);
     for (const m of this.members) {
+      if (m.resetAt !== undefined && this.elapsed >= m.resetAt) {
+        m.resetAt = undefined;
+        m.avatar?.setExpression("neutral", 0, EXPRESSION_FADE);
+        m.avatar?.lookAt(null);
+      }
       m.driver.tick(dt, m.avatar);
       m.avatar?.update(dt);
     }
@@ -147,6 +200,42 @@ export class StageView {
 
   dispose(): void {
     for (const m of [...this.members]) this.removeMember(m.spec.id);
+  }
+
+  /** Fires the current line's cues that are due at `t` seconds into it. */
+  private fireDue(t: number): void {
+    const p = this.performance;
+    if (!p || t < 0) return;
+    while (p.cues.length && p.cues[0].time !== "end" && p.cues[0].time <= t) this.fire(p.speaker, p.cues.shift()!.cue);
+  }
+
+  /** Fires whatever the current line still has, "end" cues included, and ends it. */
+  private firePending(): void {
+    const p = this.performance;
+    this.performance = null;
+    for (const { cue } of p?.cues ?? []) this.fire(p!.speaker, cue);
+  }
+
+  private fire(speakerId: string, cue: Cue): void {
+    const m = this.member(speakerId);
+    const avatar = m?.avatar;
+    if (!m || !avatar) return;
+    if (cue.expression) avatar.setExpression(modelName(cue.expression, m.spec.names), 1, EXPRESSION_FADE);
+    if (cue.gesture) avatar.gesture(modelName(cue.gesture, m.spec.names));
+    if (cue.lookAt !== undefined) {
+      const target = cue.lookAt === "camera" ? undefined : this.member(cue.lookAt);
+      avatar.lookAt(target && target !== m ? this.direction(m, target) : null);
+    }
+  }
+
+  private member(id: string): Member | undefined {
+    return this.members.find((m) => m.spec.id === id);
+  }
+
+  /** Where `to`'s slot is as seen from `from`'s: further slots, further to the side. */
+  private direction(from: Member, to: Member): LookTarget {
+    const d = this.members.indexOf(to) - this.members.indexOf(from);
+    return { x: Math.max(-1, Math.min(1, d * 0.6)), y: 0 };
   }
 
   private async load(member: Member): Promise<void> {

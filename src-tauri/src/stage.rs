@@ -5,7 +5,7 @@
 //! The event types mirror `LineEvent` (src/stage/Line.ts) and `LogEntry`
 //! (src/stage/ConversationLog.ts) as sent by src/speech/LocalApiSource.ts.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -110,8 +110,16 @@ pub struct SceneStatus {
     pub lines: Vec<LineStatus>,
 }
 
+/// What a character's loaded model can do, as reported by the webview.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Capabilities {
+    pub expressions: Vec<String>,
+    pub gestures: Vec<String>,
+}
+
 pub struct StageTracker {
     scenes: Mutex<VecDeque<SceneStatus>>,
+    capabilities: Mutex<HashMap<String, Capabilities>>,
     events: broadcast::Sender<StageEvent>,
 }
 
@@ -119,6 +127,7 @@ impl Default for StageTracker {
     fn default() -> Self {
         Self {
             scenes: Mutex::new(VecDeque::new()),
+            capabilities: Mutex::default(),
             events: broadcast::channel(EVENT_BUFFER).0,
         }
     }
@@ -155,6 +164,15 @@ impl StageTracker {
         }
         // No subscribers is fine.
         let _ = self.events.send(event);
+    }
+
+    /// Replaces what the loaded models can do, by character id.
+    pub fn set_capabilities(&self, capabilities: HashMap<String, Capabilities>) {
+        *self.capabilities.lock().unwrap() = capabilities;
+    }
+
+    pub fn capabilities(&self) -> HashMap<String, Capabilities> {
+        self.capabilities.lock().unwrap().clone()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<StageEvent> {

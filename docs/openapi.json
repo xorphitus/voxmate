@@ -622,7 +622,9 @@
           "name",
           "speaker",
           "voice",
-          "onStage"
+          "onStage",
+          "expressions",
+          "gestures"
         ],
         "properties": {
           "id": {
@@ -644,9 +646,94 @@
           },
           "onStage": {
             "type": "boolean",
-            "description": "Whether this is the character on stage, used by lines that name none."
+            "description": "The default character: it speaks lines that name none."
+          },
+          "expressions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Expressions its model has, once loaded on stage (portable names work\ntoo; see `Cue`). Empty while the model isn't loaded."
+          },
+          "gestures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Gestures its model can do, once loaded on stage."
           }
         }
+      },
+      "Cue": {
+        "type": "object",
+        "description": "One action at one time. Expression and gesture names are the portable\nones (`neutral`, `happy`, `sad`, `angry`, `surprised`, `relaxed`; `nod`,\n`shake`, `tilt`), which each character maps to its model, or the model's\nown names (`GET /characters`). Names the model lacks are ignored.",
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/CueTime"
+          },
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "surprised",
+            "maxLength": 64
+          },
+          "gesture": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "nod",
+            "maxLength": 64
+          },
+          "lookAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A character id to look at, or `camera` for the user.",
+            "example": "camera"
+          }
+        }
+      },
+      "CueEdge": {
+        "type": "string",
+        "enum": [
+          "start",
+          "end"
+        ]
+      },
+      "CueTime": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CueEdge",
+            "description": "`\"start\"` or `\"end\"` of the line."
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Seconds into the line."
+          },
+          {
+            "type": "object",
+            "description": "When accent phrase `phrase` (0-based) of the line's `audio_query`\nstarts; past the last phrase means the end.",
+            "required": [
+              "phrase"
+            ],
+            "properties": {
+              "phrase": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "When a cue fires."
       },
       "Health": {
         "type": "object",
@@ -761,6 +848,26 @@
           "direction": {
             "type": "boolean",
             "description": "A stage direction, e.g. \"(The topic changes to dinner.)\": never\nspoken, only added to the conversation log. Needs `text`; can't have\nan `audioQuery`."
+          },
+          "emotion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An expression held for the whole line, e.g. `happy` (see `Cue.expression`).",
+            "example": "happy",
+            "maxLength": 64
+          },
+          "cues": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Cue"
+            },
+            "description": "What the character does while speaking, timed to the line. At most 50.",
+            "maxItems": 50
           }
         }
       },

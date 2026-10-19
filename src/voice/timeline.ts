@@ -116,3 +116,20 @@ export function segmentAt(segments: readonly Segment[], t: number): Segment | nu
   }
   return null;
 }
+
+/**
+ * When each accent phrase starts, in seconds, with the same timing rules as
+ * `buildTimeline`. Cues use it to act at a phrase ("at": {"phrase": n}).
+ */
+export function phraseStarts(query: AudioQuery): number[] {
+  const speed = query.speedScale > 0 ? query.speedScale : 1;
+  const len = (x: number | null | undefined) => Math.max(0, x ?? 0) / speed;
+  const starts: number[] = [];
+  let t = len(query.prePhonemeLength);
+  for (const phrase of query.accent_phrases) {
+    starts.push(t);
+    for (const mora of phrase.moras) t += len(mora.consonant ? mora.consonant_length : 0) + len(mora.vowel_length);
+    if (phrase.pause_mora) t += len((query.pauseLength ?? phrase.pause_mora.vowel_length) * (query.pauseLengthScale ?? 1));
+  }
+  return starts;
+}

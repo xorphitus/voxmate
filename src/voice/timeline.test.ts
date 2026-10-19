@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./__fixtures__/audio_query_konnichiwa.json";
-import { buildTimeline, segmentAt, timelineDuration, type AudioQuery } from "./timeline";
+import { buildTimeline, phraseStarts, segmentAt, timelineDuration, type AudioQuery } from "./timeline";
 
 const query = fixture as AudioQuery;
 const withQuery = (patch: Partial<AudioQuery>): AudioQuery => ({ ...query, ...patch });
@@ -101,5 +101,27 @@ describe("segmentAt", () => {
   });
   it("uses half-open intervals", () => {
     expect(segmentAt(tl, tl[1].start)).toBe(tl[1]);
+  });
+});
+
+describe("phraseStarts", () => {
+  it("starts each accent phrase where its first mora starts in the timeline", () => {
+    const starts = phraseStarts(query);
+    expect(starts).toHaveLength(query.accent_phrases.length);
+    expect(starts[0]).toBeCloseTo(query.prePhonemeLength, 9);
+    // The second phrase starts after the first phrase's moras and pause.
+    const tl = buildTimeline(query);
+    const first = query.accent_phrases[0];
+    const firstLength =
+      first.moras.reduce((t, m) => t + (m.consonant ? (m.consonant_length ?? 0) : 0) + m.vowel_length, 0) +
+      (first.pause_mora?.vowel_length ?? 0);
+    if (starts.length > 1) expect(starts[1]).toBeCloseTo(query.prePhonemeLength + firstLength, 9);
+    expect(starts[starts.length - 1]).toBeLessThan(timelineDuration(tl));
+  });
+
+  it("scales with speed", () => {
+    const slow = phraseStarts(query);
+    const fast = phraseStarts(withQuery({ speedScale: 2 }));
+    fast.forEach((t, i) => expect(t).toBeCloseTo(slow[i] / 2, 9));
   });
 });

@@ -14,6 +14,7 @@
 //! `utoipa`, served at `GET /openapi.json` and committed as
 //! `docs/openapi.json` (a test fails when the two differ).
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -36,7 +37,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 use utoipa::{OpenApi, ToSchema};
 
-use crate::stage::{LineState, LineStatus, SceneStatus, StageEvent, StageTracker};
+use crate::stage::{Capabilities, LineState, LineStatus, SceneStatus, StageEvent, StageTracker};
 use crate::voicevox::{Speaker, VoiceParams};
 
 pub const DEFAULT_PORT: u16 = 50080;
@@ -89,6 +90,93 @@ pub struct LineRequest {
     /// an `audioQuery`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direction: bool,
+    /// An expression held for the whole line, e.g. `happy` (see `Cue.expression`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "happy", max_length = 64)]
+    pub emotion: Option<String>,
+    /// What the character does while speaking, timed to the line. At most 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(max_items = 50)]
+    pub cues: Option<Vec<Cue>>,
+}
+
+pub const MAX_CUES: usize = 50;
+const MAX_CUE_NAME: usize = 64;
+
+/// When a cue fires.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum CueTime {
+    /// `"start"` or `"end"` of the line.
+    Edge(CueEdge),
+    /// Seconds into the line.
+    Seconds(f64),
+    /// When accent phrase `phrase` (0-based) of the line's `audio_query`
+    /// starts; past the last phrase means the end.
+    Phrase { phrase: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CueEdge {
+    Start,
+    End,
+}
+
+/// One action at one time. Expression and gesture names are the portable
+/// ones (`neutral`, `happy`, `sad`, `angry`, `surprised`, `relaxed`; `nod`,
+/// `shake`, `tilt`), which each character maps to its model, or the model's
+/// own names (`GET /characters`). Names the model lacks are ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Cue {
+    pub at: CueTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "surprised", max_length = 64)]
+    pub expression: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "nod", max_length = 64)]
+    pub gesture: Option<String>,
+    /// A character id to look at, or `camera` for the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "camera")]
+    pub look_at: Option<String>,
+}
+
+fn validate_cue_name(field: &str, name: &Option<String>) -> Result<(), String> {
+    match name {
+        Some(n) if n.trim().is_empty() || n.chars().count() > MAX_CUE_NAME => {
+            Err(format!("{field} must be 1 to {MAX_CUE_NAME} characters"))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_cues(emotion: &Option<String>, cues: &Option<Vec<Cue>>) -> Result<(), String> {
+    validate_cue_name("emotion", emotion)?;
+    let cues = cues.as_deref().unwrap_or_default();
+    if cues.len() > MAX_CUES {
+        return Err(format!("a line has at most {MAX_CUES} cues"));
+    }
+    for (i, cue) in cues.iter().enumerate() {
+        let at = |e: String| format!("cues[{i}]: {e}");
+        if let CueTime::Seconds(s) = cue.at {
+            if !(s.is_finite() && s >= 0.0) {
+                return Err(at("at must not be negative".into()));
+            }
+        }
+        if cue.expression.is_none() && cue.gesture.is_none() && cue.look_at.is_none() {
+            return Err(at("needs an expression, a gesture or lookAt".into()));
+        }
+        validate_cue_name("expression", &cue.expression).map_err(at)?;
+        validate_cue_name("gesture", &cue.gesture).map_err(at)?;
+        if let Some(target) = &cue.look_at {
+            if target != "camera" && !is_character_id(target) {
+                return Err(at("lookAt must be a character id or \"camera\"".into()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Mirrors the id rule in src/characters.ts.
@@ -191,8 +279,13 @@ pub struct CharacterInfo {
     pub speaker: u32,
     /// Default voice parameters; lines override them.
     pub voice: VoiceParams,
-    /// Whether this is the character on stage, used by lines that name none.
+    /// The default character: it speaks lines that name none.
     pub on_stage: bool,
+    /// Expressions its model has, once loaded on stage (portable names work
+    /// too; see `Cue`). Empty while the model isn't loaded.
+    pub expressions: Vec<String>,
+    /// Gestures its model can do, once loaded on stage.
+    pub gestures: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -300,6 +393,7 @@ pub fn validate(req: LineRequest) -> Result<LineRequest, String> {
     if let Some(voice) = &req.voice {
         voice.validate()?;
     }
+    validate_cues(&req.emotion, &req.cues)?;
     Ok(LineRequest {
         text: text.to_string(),
         ..req
@@ -369,7 +463,11 @@ pub fn resolve_speaker(characters: Option<&Value>, default: Option<&str>, id: Op
 }
 
 /// `GET /characters` from the saved settings; entries without an id are skipped.
-pub fn character_infos(characters: Option<&Value>, default: Option<&str>) -> Vec<CharacterInfo> {
+pub fn character_infos(
+    characters: Option<&Value>,
+    default: Option<&str>,
+    capabilities: &HashMap<String, Capabilities>,
+) -> Vec<CharacterInfo> {
     let list = character_list(characters);
     let on_stage = on_stage_id(list, default);
     list.iter()
@@ -384,6 +482,8 @@ pub fn character_infos(characters: Option<&Value>, default: Option<&str>) -> Vec
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default(),
                 on_stage: Some(id) == on_stage,
+                expressions: capabilities.get(id).map(|c| c.expressions.clone()).unwrap_or_default(),
+                gestures: capabilities.get(id).map(|c| c.gestures.clone()).unwrap_or_default(),
             })
         })
         .collect()
@@ -824,7 +924,7 @@ mod tests {
         }
         fn characters(&self) -> Vec<CharacterInfo> {
             let list = json!([{ "id": "zunda", "name": "ずんだもん", "speaker": 3, "voice": { "speed": 1.1 } }]);
-            character_infos(Some(&list), Some("zunda"))
+            character_infos(Some(&list), Some("zunda"), &self.tracker.capabilities())
         }
         fn speakers(&self) -> BoxFuture<Result<Vec<Speaker>, String>> {
             Box::pin(async { Err("cannot reach VOICEVOX engine".into()) })
@@ -1050,7 +1150,7 @@ mod tests {
         let res = router(fake).oneshot(request("GET", "/characters")).await.unwrap();
         assert_eq!(
             body_json(res).await,
-            json!([{ "id": "zunda", "name": "ずんだもん", "speaker": 3, "voice": { "speed": 1.1 }, "onStage": true }])
+            json!([{ "id": "zunda", "name": "ずんだもん", "speaker": 3, "voice": { "speed": 1.1 }, "onStage": true, "expressions": [], "gestures": [] }])
         );
     }
 
@@ -1061,10 +1161,87 @@ mod tests {
         assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
     }
 
+    #[tokio::test]
+    async fn accepts_cues() {
+        let (fake, _) = capture();
+        let line = json!({ "text": "やった", "emotion": "happy", "cues": [
+            { "at": "start", "lookAt": "camera" },
+            { "at": { "phrase": 1 }, "gesture": "nod" },
+            { "at": 0.5, "expression": "surprised" },
+            { "at": "end", "lookAt": "metan" },
+        ] });
+        let res = router(fake.clone())
+            .oneshot(post_json("/speak", &line.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::ACCEPTED);
+        let lines = fake.lines();
+        let cues = lines[0].cues.as_ref().unwrap();
+        assert_eq!(cues[1].at, CueTime::Phrase { phrase: 1 });
+        assert_eq!(cues[2].at, CueTime::Seconds(0.5));
+        assert_eq!(cues[3].at, CueTime::Edge(CueEdge::End));
+        // Sent to the webview in the same shape.
+        let sent = serde_json::to_value(&lines[0]).unwrap();
+        assert_eq!(sent["cues"], line["cues"]);
+    }
+
+    #[tokio::test]
+    async fn rejects_bad_cues() {
+        let (fake, _) = capture();
+        let cases = [
+            (
+                json!([{ "at": "start" }]),
+                "cues[0]: needs an expression, a gesture or lookAt",
+            ),
+            (
+                json!([{ "at": -1, "gesture": "nod" }]),
+                "cues[0]: at must not be negative",
+            ),
+            (
+                json!([{ "at": "end", "lookAt": "Bad Id" }]),
+                "cues[0]: lookAt must be a character id or \"camera\"",
+            ),
+            (
+                json!([{ "at": "end", "expression": " " }]),
+                "cues[0]: expression must be 1 to 64 characters",
+            ),
+            (
+                json!(vec![json!({ "at": "end", "gesture": "nod" }); MAX_CUES + 1]),
+                "a line has at most 50 cues",
+            ),
+        ];
+        for (cues, message) in cases {
+            let line = json!({ "text": "a", "cues": cues });
+            let res = router(fake.clone())
+                .oneshot(post_json("/speak", &line.to_string()))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(body_json(res).await, json!({ "error": message }));
+        }
+        let res = router(fake)
+            .oneshot(post_json(
+                "/speak",
+                r#"{"text":"a","cues":[{"at":"middle","gesture":"nod"}]}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     #[test]
     fn character_infos_from_settings() {
         let list = json!([{ "id": "a" }, { "name": "no id" }, { "id": "b", "speaker": 8, "voice": { "speed": "x" } }]);
-        let infos = character_infos(Some(&list), Some("gone"));
+        let caps = HashMap::from([(
+            "b".to_string(),
+            Capabilities {
+                expressions: vec!["happy".into()],
+                gestures: vec![],
+            },
+        )]);
+        let infos = character_infos(Some(&list), Some("gone"), &caps);
+        assert_eq!(infos[1].expressions, vec!["happy"]);
+        assert!(infos[0].expressions.is_empty());
         assert_eq!(infos.len(), 2);
         assert_eq!(
             (infos[0].name.as_str(), infos[0].speaker, infos[0].on_stage),
@@ -1220,6 +1397,8 @@ mod tests {
                 }),
                 audio_query: None,
                 direction: false,
+                emotion: None,
+                cues: None,
             }]
         );
     }

@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 use tauri_plugin_store::StoreExt;
 
 use crate::llm::{ChatMessage, LlmClient};
-use crate::stage::{StageEvent, StageTracker};
+use crate::stage::{Capabilities, StageEvent, StageTracker};
 use crate::voicevox::{Speaker, VoiceParams, VoicevoxClient};
 
 /// Shared with the frontend (`src/config.ts`), which owns writing it.
@@ -179,6 +179,12 @@ fn stage_ready(ready: State<'_, StageReady>) {
     ready.0.store(true, Ordering::SeqCst);
 }
 
+/// What the models on stage can do, by character id, for `GET /characters`.
+#[tauri::command]
+fn stage_capabilities(capabilities: HashMap<String, Capabilities>, tracker: State<'_, Arc<StageTracker>>) {
+    tracker.set_capabilities(capabilities);
+}
+
 /// Lifecycle and log events from the webview, for `GET /scenes/{id}` and `GET /events`.
 #[tauri::command]
 fn stage_event(event: StageEvent, tracker: State<'_, Arc<StageTracker>>) {
@@ -223,6 +229,7 @@ impl api::Backend for AppBackend {
         api::character_infos(
             self.setting("characters").as_ref(),
             default.as_ref().and_then(|v| v.as_str()),
+            &self.app.state::<Arc<StageTracker>>().capabilities(),
         )
     }
 
@@ -327,6 +334,7 @@ pub fn run() {
             api_status,
             stage_ready,
             stage_event,
+            stage_capabilities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxmate");

@@ -1,4 +1,4 @@
-import type { Character } from "../characters";
+import { type Character, formatNames, parseNames } from "../characters";
 import type { LlmMode, Settings } from "../config";
 import type { OrchestratorState, StopReason } from "../stage/Orchestrator";
 import type { LineSink, TextSource } from "../speech/TextSource";
@@ -53,6 +53,7 @@ export class Controls implements TextSource {
   private readonly characterModel = $<HTMLElement>("character-model");
   private readonly characterPersona = $<HTMLTextAreaElement>("character-persona");
   private readonly characterLlmModel = $<HTMLInputElement>("character-llm-model");
+  private readonly characterNames = $<HTMLInputElement>("character-names");
   private readonly characterVoice = new Map<VoiceField, HTMLInputElement>();
   private readonly characterRemove = $<HTMLButtonElement>("character-remove");
   private readonly characterOnStage = $<HTMLInputElement>("character-on-stage");
@@ -135,6 +136,9 @@ export class Controls implements TextSource {
     this.characterId.addEventListener("change", () => handlers.editCharacter({ id: this.characterId.value.trim() }));
     this.characterPersona.addEventListener("change", () =>
       handlers.editCharacter({ persona: this.characterPersona.value }),
+    );
+    this.characterNames.addEventListener("change", () =>
+      handlers.editCharacter({ names: parseNames(this.characterNames.value) }),
     );
     this.characterLlmModel.addEventListener("change", () =>
       handlers.editCharacter({ llmModel: this.characterLlmModel.value.trim() }),
@@ -264,6 +268,7 @@ export class Controls implements TextSource {
     this.characterModel.textContent = this.current.modelPath?.split("/").pop() ?? "none (Load model…)";
     this.characterPersona.value = this.current.persona;
     this.characterLlmModel.value = this.current.llmModel;
+    this.characterNames.value = formatNames(this.current.names);
     for (const [field, input] of this.characterVoice) {
       const value = this.current.voice[field];
       input.value = value === undefined ? "" : String(value);

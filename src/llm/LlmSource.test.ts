@@ -148,3 +148,23 @@ describe("LlmSource.respond", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 });
+
+describe("LlmAgent cue tags", () => {
+  it("acts out tags instead of speaking them, and tells the model which exist", async () => {
+    const { provider, requests } = fakeProvider([["[happy]やった", "のだ！", "[nod]", "うん。"]]);
+    const agent = new LlmAgent({
+      character: { ...zunda, cues: { expressions: ["neutral", "happy"], gestures: ["nod"] } },
+      provider,
+      nameOf: (id) => id,
+      history: 10,
+      source: "llm",
+    });
+    const lines: LineDraft[] = [];
+    for await (const l of agent.respond([], new AbortController().signal)) lines.push(l);
+    expect(lines).toEqual([
+      { text: "やったのだ！", character: "zunda", source: "llm", cues: [{ at: "start", expression: "happy" }] },
+      { text: "うん。", character: "zunda", source: "llm", cues: [{ at: "start", gesture: "nod" }] },
+    ]);
+    expect(requests[0][0].content).toContain("Available: [happy] [nod]");
+  });
+});

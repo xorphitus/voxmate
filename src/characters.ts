@@ -18,6 +18,8 @@ export interface Character {
   llmModel: string;
   /** Default voice; a line's own `voice` overrides it field by field. */
   voice: VoiceParams;
+  /** The model's own names for portable expressions and gestures, e.g. { happy: "f01" }. */
+  names: Record<string, string>;
 }
 
 export const DEFAULT_SPEAKER = 3; // ずんだもん (ノーマル) in the default engine
@@ -51,6 +53,7 @@ export function newCharacter(characters: Character[], template?: Character): Cha
       id: uniqueId(`${template.id}-copy`.slice(0, 64), characters),
       name: `${template.name} (copy)`,
       voice: { ...template.voice },
+      names: { ...template.names },
     };
   }
   return {
@@ -61,6 +64,7 @@ export function newCharacter(characters: Character[], template?: Character): Cha
     persona: DEFAULT_PERSONA,
     llmModel: "",
     voice: {},
+    names: {},
   };
 }
 
@@ -81,6 +85,7 @@ export function migrateCharacter(legacy: LegacySettings): Character {
     persona: typeof legacy.llmSystemPrompt === "string" ? legacy.llmSystemPrompt : DEFAULT_PERSONA,
     llmModel: "",
     voice: {},
+    names: {},
   };
 }
 
@@ -100,6 +105,7 @@ export function sanitizeCharacters(stored: unknown): Character[] {
       persona: typeof c.persona === "string" ? c.persona : "",
       llmModel: typeof c.llmModel === "string" ? c.llmModel : "",
       voice: sanitizeVoice(c.voice),
+      names: sanitizeNames(c.names),
     });
   }
   return out;
@@ -125,4 +131,30 @@ export function normalizeStage(stored: unknown, characters: Character[], default
   const stage = [...new Set(ids)];
   if (known.has(defaultId) && !stage.includes(defaultId)) stage.push(defaultId);
   return stage;
+}
+
+/** Keeps string → non-empty string pairs. */
+export function sanitizeNames(raw: unknown): Record<string, string> {
+  const names: Record<string, string> = {};
+  if (typeof raw !== "object" || raw === null) return names;
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string" && value.trim() && key.trim()) names[key.trim()] = value.trim();
+  }
+  return names;
+}
+
+/** "happy=f01, nod=TapBody" → { happy: "f01", nod: "TapBody" }; malformed parts are skipped. */
+export function parseNames(text: string): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const part of text.split(/[,\n]/)) {
+    const [key, value, ...rest] = part.split("=").map((s) => s.trim());
+    if (key && value && rest.length === 0) names[key] = value;
+  }
+  return names;
+}
+
+export function formatNames(names: Record<string, string>): string {
+  return Object.entries(names)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
 }
