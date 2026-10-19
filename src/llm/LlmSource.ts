@@ -1,4 +1,4 @@
-import type { TextSource, UtteranceSink } from "../speech/TextSource";
+import type { TextSource, LineSink } from "../speech/TextSource";
 import type { ChatMessage, LlmProvider } from "./LlmProvider";
 import { SentenceSplitter } from "./sentences";
 import { ThinkFilter } from "./think";
@@ -17,7 +17,7 @@ export interface LlmSourceOptions {
  */
 export class LlmSource implements TextSource {
   readonly name = "llm";
-  private sink: UtteranceSink | null = null;
+  private sink: LineSink | null = null;
   private history: ChatMessage[] = [];
   private controller: AbortController | null = null;
 
@@ -27,7 +27,7 @@ export class LlmSource implements TextSource {
     private readonly onError: (error: unknown) => void,
   ) {}
 
-  start(sink: UtteranceSink): void {
+  start(sink: LineSink): void {
     this.sink = sink;
   }
 

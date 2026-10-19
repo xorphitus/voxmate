@@ -1,6 +1,6 @@
 import type { Character } from "../characters";
 import type { Settings } from "../config";
-import type { TextSource, UtteranceSink } from "../speech/TextSource";
+import type { TextSource, LineSink } from "../speech/TextSource";
 import type { Speaker } from "../voice/voicevox";
 import type { ThemePreference } from "./theme";
 
@@ -34,7 +34,7 @@ function $<T extends HTMLElement>(id: string): T {
 /** The control panel. Also the "ui" TextSource: submitted text is spoken. */
 export class Controls implements TextSource {
   readonly name = "ui";
-  private sink: UtteranceSink | null = null;
+  private sink: LineSink | null = null;
 
   private readonly form = $<HTMLFormElement>("say");
   private readonly text = $<HTMLTextAreaElement>("text");
@@ -154,7 +154,7 @@ export class Controls implements TextSource {
     }).observe(panel);
   }
 
-  start(sink: UtteranceSink): void {
+  start(sink: LineSink): void {
     this.sink = sink;
   }
 

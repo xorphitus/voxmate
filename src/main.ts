@@ -10,8 +10,9 @@ import { LipSyncDriver } from "./lipsync/LipSyncDriver";
 import { OpenAiCompatibleProvider } from "./llm/LlmProvider";
 import { LlmSource } from "./llm/LlmSource";
 import { LocalApiSource } from "./speech/LocalApiSource";
-import { SpeechQueue } from "./speech/SpeechQueue";
 import type { TextSource } from "./speech/TextSource";
+import { ConversationLog } from "./stage/ConversationLog";
+import { StagePlayer } from "./stage/StagePlayer";
 import { Controls, type SimpleSetting } from "./ui/controls";
 import { followTheme } from "./ui/theme";
 import { AudioPlayer } from "./voice/player";
@@ -47,10 +48,10 @@ async function main() {
   /** The character on stage. */
   const onStage = () => resolveCharacter(characters(), config.get("defaultCharacter"));
 
-  const queue = new SpeechQueue<Prepared>({
-    async prepare(u) {
-      const speaker = u.speaker ?? resolveCharacter(characters(), config.get("defaultCharacter"), u.character).speaker;
-      const { query, wav } = await synthesize(u.text, speaker);
+  const stagePlayer = new StagePlayer<Prepared>({
+    async prepare(line) {
+      const speaker = line.speaker ?? resolveCharacter(characters(), config.get("defaultCharacter"), line.character).speaker;
+      const { query, wav } = await synthesize(line.text, speaker);
       return { buffer: await player.decode(wav), timeline: buildTimeline(query) };
     },
     async play(p) {
@@ -65,8 +66,15 @@ async function main() {
       }
     },
     stop: () => player.stop(),
-    onError: (e, u) => controls.error(`Could not speak "${u.text.slice(0, 20)}": ${errorText(e)}`),
-    onStateChange: ({ speaking, pending }) => controls.setQueueState(speaking?.text ?? null, pending),
+    defaultCharacter: () => config.get("defaultCharacter"),
+  });
+  const log = new ConversationLog();
+  stagePlayer.subscribe((event) => {
+    log.record(event);
+    if (event.state === "failed") {
+      controls.error(`Could not speak "${event.line.text.slice(0, 20)}": ${errorText(event.error)}`);
+    }
+    controls.setQueueState(stagePlayer.current?.text ?? null, stagePlayer.pending);
   });
 
   async function refreshSpeakers() {
@@ -263,7 +271,7 @@ async function main() {
       return;
     }
     // A new question replaces whatever is still being said.
-    queue.clear();
+    stagePlayer.clear();
     controls.info(`Asking ${llmModel()}…`);
     void llm.ask(text);
   }
@@ -271,7 +279,7 @@ async function main() {
   const controls = new Controls(config.all(), {
     stop: () => {
       llm.cancel();
-      queue.clear();
+      stagePlayer.clear();
     },
     ask,
     loadModel: () => void pickModel(),
@@ -290,7 +298,7 @@ async function main() {
   window.addEventListener("keydown", unlock, { once: true });
 
   const sources: TextSource[] = [controls, new LocalApiSource(), llm];
-  for (const source of sources) await source.start((u) => queue.enqueue(u));
+  for (const source of sources) await source.start((line) => stagePlayer.enqueue(line));
 
   const api = await invoke<ApiStatus>("api_status");
   controls.setApiStatus(

@@ -91,7 +91,7 @@ curl -X POST localhost:50080/speak -H 'content-type: application/json' \
 curl localhost:50080/health
 ```
 
-API and UI requests share one queue, so utterances never overlap. `/speak`
+API, UI and LLM lines share one queue, so they never overlap. `/speak`
 returns as soon as the text is queued.
 
 The full spec is [`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1, generated
@@ -134,11 +134,12 @@ pnpm typecheck
 
 ```
 src/
-  main.ts                  wiring: config → sources → SpeechQueue → player/lipsync → avatar
+  main.ts                  wiring: config → sources → StagePlayer → player/lipsync → avatar
   avatar/                  Avatar interface, VrmAvatar (three + three-vrm), Live2DAvatar (pixi + pixi-live2d-display)
   voice/                   VOICEVOX IPC, audio_query → mouth timeline, WAV decode, WebAudio player
   lipsync/LipSyncDriver.ts per frame: timeline vowel × normalized RMS → avatar.setMouth
-  speech/                  TextSource interface, LocalApiSource, SpeechQueue
+  speech/                  TextSource interface, LocalApiSource
+  stage/                   Line, StagePlayer (queue + lifecycle events), ConversationLog
   ui/controls.ts           control panel (also the "ui" TextSource)
   config.ts                persisted settings
   characters.ts            Character type, migration, id rules

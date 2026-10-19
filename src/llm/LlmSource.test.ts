@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Utterance } from "../speech/TextSource";
+import type { LineDraft } from "../stage/Line";
 import type { ChatMessage, LlmProvider } from "./LlmProvider";
 import { LlmSource } from "./LlmSource";
 
@@ -23,8 +23,8 @@ function setup(replies: string[][], history = 10, systemPrompt = "") {
   const { provider, requests } = fakeProvider(replies);
   const onError = vi.fn();
   const source = new LlmSource(provider, () => ({ systemPrompt, history }), onError);
-  const said: Utterance[] = [];
-  source.start((u) => said.push(u));
+  const said: LineDraft[] = [];
+  source.start((u) => (said.push(u), null));
   return { source, said, requests, onError };
 }
 
@@ -92,7 +92,7 @@ describe("LlmSource", () => {
     };
     const onError = vi.fn();
     const source = new LlmSource(provider, () => ({ systemPrompt: "", history: 10 }), onError);
-    source.start(() => {});
+    source.start(() => null);
     await source.ask("q");
     expect(onError).toHaveBeenCalledWith(new Error("boom"));
   });
@@ -102,8 +102,8 @@ describe("LlmSource character", () => {
   it("tags each sentence with the character who answers", async () => {
     const { provider } = fakeProvider([["はい。"]]);
     const source = new LlmSource(provider, () => ({ systemPrompt: "", history: 0, character: "zunda" }), vi.fn());
-    const said: Utterance[] = [];
-    source.start((u) => said.push(u));
+    const said: LineDraft[] = [];
+    source.start((u) => (said.push(u), null));
     await source.ask("やあ");
     expect(said).toEqual([{ text: "はい。", character: "zunda", source: "llm" }]);
   });
