@@ -2,6 +2,7 @@ import type { Cue } from "../avatar/cues";
 import type { Character } from "../characters";
 import { lineVoice, sanitizeVoice, type VoiceParams } from "../voice/params";
 import type { AudioQuery } from "../voice/timeline";
+import { isEmptyCue } from "./cueTrack";
 
 /**
  * One line in the editor. Saved files use the scene API's JSON
@@ -65,13 +66,14 @@ export function withStartGesture(line: EditorLine, gesture: string): EditorLine 
 /** A line as `LineRequest` JSON, without empty fields. */
 export function toRequest(line: EditorLine): Record<string, unknown> {
   const voice = sanitizeVoice(line.voice);
+  const cues = line.cues?.filter((c) => !isEmptyCue(c));
   return {
     character: line.character,
     text: line.text.trim(),
     ...(Object.keys(voice).length && { voice }),
     ...(line.emotion && { emotion: line.emotion }),
     ...(line.direction && { direction: true }),
-    ...(line.cues?.length && { cues: line.cues }),
+    ...(cues?.length && { cues }),
     ...(line.audioQuery && { audioQuery: line.audioQuery }),
     ...(line.speaker !== undefined && { speaker: line.speaker }),
   };

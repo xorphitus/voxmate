@@ -49,7 +49,7 @@ describe("scene files", () => {
     const file = toSceneFile([
       line(" こんにちは ", { voice: { speed: 1.2, pitch: 9 }, emotion: "happy" }),
       line("  "),
-      line("(夕食の話)", { character: "metan", direction: true }),
+      line("(夕食の話)", { character: "metan", direction: true, cues: [{ at: "start" }] }),
     ]);
     expect(file).toEqual({
       lines: [

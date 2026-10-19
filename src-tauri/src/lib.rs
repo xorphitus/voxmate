@@ -310,6 +310,12 @@ fn stage_capabilities(capabilities: HashMap<String, Capabilities>, tracker: Stat
     tracker.set_capabilities(capabilities);
 }
 
+/// What each character's model can do, for the scene editor's cue names.
+#[tauri::command]
+fn stage_character_capabilities(tracker: State<'_, Arc<StageTracker>>) -> HashMap<String, Capabilities> {
+    tracker.capabilities()
+}
+
 /// Lifecycle and log events from the webview, for `GET /scenes/{id}` and `GET /events`.
 #[tauri::command]
 fn stage_event(event: StageEvent, tracker: State<'_, Arc<StageTracker>>) {
@@ -462,6 +468,7 @@ pub fn run() {
             stage_ready,
             stage_event,
             stage_capabilities,
+            stage_character_capabilities,
             open_editor,
             read_scene_file,
             write_scene_file,

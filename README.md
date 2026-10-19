@@ -191,6 +191,11 @@ options.
   for each mora's pitch and length, and ↺ resets a phrase. The edited query is
   saved with the line and played as is, with the character's voice settings
   of that moment baked in. Changing the text afterwards asks to drop it.
+  **◆** opens the line's cues: expressions, gestures and gaze at the start,
+  at an accent phrase (labeled with its kana), at the end or after some
+  seconds. The model's own expressions and motions are offered next to the
+  portable names once the stage window has loaded it. Phrases with cues are
+  marked ◆ in the accent panel.
   **Open…** also imports the talk track of a VOICEVOX project (`.vvproj`):
   each item becomes a line with its edited query, and its voice maps to the
   character with that speaker (or stays as the line's `speaker`).
