@@ -79,7 +79,7 @@ port or turn the API off in Settings (takes effect after a restart).
 curl -X POST localhost:50080/speak \
   -H 'content-type: application/json' \
   -d '{"text":"こんにちは"}'
-# => 202 {"status":"queued"}
+# => 202 {"status":"queued","lineId":"…"}
 
 # Optional: pick a character (its id from Settings), or override the VOICEVOX
 # style id for this utterance
@@ -102,12 +102,31 @@ curl -X POST localhost:50080/audio_query -H 'content-type: application/json' \
 curl -X POST localhost:50080/speak -H 'content-type: application/json' \
   -d "{\"text\":\"こんにちは\",\"audioQuery\":$(cat query.json)}"
 
+# Scenes: several lines, possibly by different characters, kept together.
+# "placement":"next" puts them right after the current line instead of last.
+curl -X POST localhost:50080/scenes -H 'content-type: application/json' \
+  -d '{"lines":[{"character":"zunda","text":"こんにちは"},
+                {"character":"metan","text":"こんにちは、ずんだもん"},
+                {"text":"(話題は夕食に移る)","direction":true}]}'
+# => 202 {"id":"…","lineIds":["…","…","…"]}
+curl localhost:50080/scenes/<id>              # per-line state
+curl -X DELETE localhost:50080/scenes/<id>    # cancel the rest
+
+# Follow playback (Server-Sent Events): "line" events (queued, preparing,
+# speaking, done, interrupted, skipped, failed) and "log" entries for every
+# line, whoever produced it.
+curl -N localhost:50080/events
+
+curl localhost:50080/characters   # ids, names, speakers, default voices
+curl localhost:50080/speakers     # VOICEVOX speakers and style ids
+
 curl localhost:50080/health
 ```
 
-API, UI and LLM lines share one queue, so they never overlap. Request bodies are limited
-to 1 MiB. `/speak`
-returns as soon as the text is queued.
+API, UI and LLM lines share one queue, so they never overlap. `/speak` and
+`/scenes` return as soon as the lines are queued, and answer 503 while the app
+is still starting. A scene has at most 200 lines, and request bodies are
+limited to 1 MiB. A stage direction is never spoken, only logged.
 
 The full spec is [`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1, generated
 from `api.rs`), and the running app serves the same document at
@@ -161,7 +180,8 @@ src/
   characters.ts            Character type, migration, id rules
 src-tauri/src/
   voicevox.rs              reqwest client: /speakers, /audio_query, /synthesis
-  api.rs                   axum server: POST /speak, POST /audio_query, GET /health, GET /openapi.json
+  api.rs                   axum server: /speak, /scenes, /events (SSE), /characters, /speakers, /audio_query, /health, /openapi.json
+  stage.rs                 scene status and event fan-out for the API
   lib.rs                   commands, plugins, window creation, API startup
 ```
 

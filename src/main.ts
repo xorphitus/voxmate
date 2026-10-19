@@ -9,7 +9,7 @@ import { Config, type Settings } from "./config";
 import { LipSyncDriver } from "./lipsync/LipSyncDriver";
 import { OpenAiCompatibleProvider } from "./llm/LlmProvider";
 import { LlmSource } from "./llm/LlmSource";
-import { LocalApiSource } from "./speech/LocalApiSource";
+import { LocalApiSource, reportLineEvent, reportLogEntry } from "./speech/LocalApiSource";
 import type { TextSource } from "./speech/TextSource";
 import { ConversationLog } from "./stage/ConversationLog";
 import { StagePlayer } from "./stage/StagePlayer";
@@ -73,7 +73,9 @@ async function main() {
   });
   const log = new ConversationLog();
   stagePlayer.subscribe((event) => {
-    log.record(event);
+    reportLineEvent(event);
+    const entry = log.record(event);
+    if (entry) reportLogEntry(entry);
     if (event.state === "failed") {
       controls.error(`Could not speak "${event.line.text.slice(0, 20)}": ${errorText(event.error)}`);
     }
@@ -300,7 +302,7 @@ async function main() {
   window.addEventListener("pointerdown", unlock, { once: true });
   window.addEventListener("keydown", unlock, { once: true });
 
-  const sources: TextSource[] = [controls, new LocalApiSource(), llm];
+  const sources: TextSource[] = [controls, new LocalApiSource(stagePlayer), llm];
   for (const source of sources) await source.start((line) => stagePlayer.enqueue(line));
 
   const api = await invoke<ApiStatus>("api_status");

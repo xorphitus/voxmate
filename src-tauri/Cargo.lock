@@ -4235,6 +4235,7 @@ name = "voxmate"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures-util",
  "http-body-util",
  "reqwest 0.12.28",
  "serde",
@@ -4247,6 +4248,7 @@ dependencies = [
  "tokio",
  "tower",
  "utoipa",
+ "uuid",
  "wiremock",
 ]
 

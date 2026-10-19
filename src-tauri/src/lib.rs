@@ -1,8 +1,10 @@
 mod api;
 mod llm;
+mod stage;
 mod voicevox;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -10,13 +12,16 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
-use crate::api::SpeakRequest;
 use crate::llm::{ChatMessage, LlmClient};
+use crate::stage::{StageEvent, StageTracker};
 use crate::voicevox::{Speaker, VoiceParams, VoicevoxClient};
 
 /// Shared with the frontend (`src/config.ts`), which owns writing it.
 const SETTINGS_FILE: &str = "settings.json";
-const SPEAK_EVENT: &str = "speak-request";
+/// Lines from the Local API for the webview to queue (`api::Submission`).
+const SUBMIT_EVENT: &str = "stage-submit";
+/// A scene id whose remaining lines the webview should drop.
+const CANCEL_SCENE_EVENT: &str = "stage-cancel-scene";
 
 /// Settings that must be known before the webview exists.
 struct StartupSettings {
@@ -154,33 +159,88 @@ fn api_status(status: State<'_, Mutex<ApiStatus>>) -> ApiStatus {
     status.lock().unwrap().clone()
 }
 
-/// Answers `POST /audio_query`: resolves `character` from the saved settings,
-/// which the frontend keeps up to date, then asks the engine.
-fn audio_query_source(app: &AppHandle) -> api::AudioQuerySource {
-    let app = app.clone();
-    Arc::new(move |req: api::AudioQueryRequest| {
-        let app = app.clone();
+/// Set by the webview (`stage_ready`) once it listens for submissions.
+#[derive(Default)]
+struct StageReady(AtomicBool);
+
+/// The webview finished starting and will now queue API lines.
+#[tauri::command]
+fn stage_ready(ready: State<'_, StageReady>) {
+    ready.0.store(true, Ordering::SeqCst);
+}
+
+/// Lifecycle and log events from the webview, for `GET /scenes/{id}` and `GET /events`.
+#[tauri::command]
+fn stage_event(event: StageEvent, tracker: State<'_, Arc<StageTracker>>) {
+    tracker.record(event);
+}
+
+/// The API's view of the app: submissions go to the webview as events, and
+/// characters come from the saved settings, which the frontend keeps current.
+struct AppBackend {
+    app: AppHandle,
+}
+
+impl AppBackend {
+    fn setting(&self, key: &str) -> Option<serde_json::Value> {
+        self.app.store(SETTINGS_FILE).ok()?.get(key)
+    }
+
+    fn client(&self) -> Arc<VoicevoxClient> {
+        self.app.state::<Arc<VoicevoxClient>>().inner().clone()
+    }
+}
+
+impl api::Backend for AppBackend {
+    fn ready(&self) -> bool {
+        self.app.state::<StageReady>().0.load(Ordering::SeqCst)
+    }
+
+    fn submit(&self, submission: api::Submission) {
+        if let Err(e) = self.app.emit(SUBMIT_EVENT, &submission) {
+            eprintln!("failed to forward lines to the webview: {e}");
+        }
+    }
+
+    fn cancel_scene(&self, id: &str) {
+        if let Err(e) = self.app.emit(CANCEL_SCENE_EVENT, id) {
+            eprintln!("failed to forward scene cancel to the webview: {e}");
+        }
+    }
+
+    fn characters(&self) -> Vec<api::CharacterInfo> {
+        let default = self.setting("defaultCharacter");
+        api::character_infos(
+            self.setting("characters").as_ref(),
+            default.as_ref().and_then(|v| v.as_str()),
+        )
+    }
+
+    fn speakers(&self) -> api::BoxFuture<Result<Vec<Speaker>, String>> {
+        let client = self.client();
+        Box::pin(async move { client.speakers().await.map_err(|e| e.to_string()) })
+    }
+
+    fn audio_query(&self, req: api::AudioQueryRequest) -> api::BoxFuture<Result<serde_json::Value, api::QueryError>> {
+        let speaker = match req.speaker {
+            Some(speaker) => Ok(speaker),
+            None => {
+                let default = self.setting("defaultCharacter");
+                api::resolve_speaker(
+                    self.setting("characters").as_ref(),
+                    default.as_ref().and_then(|v| v.as_str()),
+                    req.character.as_deref(),
+                )
+            }
+        };
+        let client = self.client();
         Box::pin(async move {
-            let speaker = match req.speaker {
-                Some(speaker) => speaker,
-                None => {
-                    let store = app.store(SETTINGS_FILE).ok();
-                    let get = |key: &str| store.as_ref().and_then(|s| s.get(key));
-                    let default = get("defaultCharacter");
-                    api::resolve_speaker(
-                        get("characters").as_ref(),
-                        default.as_ref().and_then(|v| v.as_str()),
-                        req.character.as_deref(),
-                    )?
-                }
-            };
-            let client = app.state::<Arc<VoicevoxClient>>().inner().clone();
             client
-                .audio_query(&req.text, speaker)
+                .audio_query(&req.text, speaker?)
                 .await
                 .map_err(|e| api::QueryError::Engine(e.to_string()))
         })
-    })
+    }
 }
 
 fn start_api(app: &AppHandle, settings: &StartupSettings) -> ApiStatus {
@@ -195,15 +255,9 @@ fn start_api(app: &AppHandle, settings: &StartupSettings) -> ApiStatus {
     }
     match api::bind(settings.api_port) {
         Ok(listener) => {
-            let handle = app.clone();
-            let speak: api::SpeakSink = Arc::new(move |req: SpeakRequest| {
-                if let Err(e) = handle.emit(SPEAK_EVENT, &req) {
-                    eprintln!("failed to forward speak request: {e}");
-                }
-            });
             let state = api::ApiState {
-                speak,
-                audio_query: audio_query_source(app),
+                backend: Arc::new(AppBackend { app: app.clone() }),
+                tracker: app.state::<Arc<StageTracker>>().inner().clone(),
             };
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = api::serve(listener, state).await {
@@ -237,6 +291,8 @@ pub fn run() {
             app.manage(client.clone());
             app.manage(Arc::new(LlmClient::new()?));
             app.manage(LlmTask::default());
+            app.manage(StageReady::default());
+            app.manage(Arc::new(StageTracker::default()));
             app.manage(Mutex::new(start_api(&handle, &settings)));
 
             // Created here rather than in tauri.conf.json because transparency
@@ -258,6 +314,8 @@ pub fn run() {
             llm_cancel,
             allow_model_file,
             api_status,
+            stage_ready,
+            stage_event,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxmate");

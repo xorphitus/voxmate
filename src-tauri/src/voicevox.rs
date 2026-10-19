@@ -32,13 +32,15 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpeakerStyle {
+    /// Style name, e.g. ノーマル.
     pub name: String,
+    /// What `speaker` takes elsewhere in the API.
     pub id: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Speaker {
     pub name: String,
     pub speaker_uuid: String,

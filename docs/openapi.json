@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "voxmate Local API",
-    "description": "Make the voxmate avatar speak. Listens on 127.0.0.1 only (port 50080 by default, configurable in the app). Every request needs a loopback `Host` header (`127.0.0.1`, `localhost` or `[::1]`). CORS preflights are never answered, so web pages on other origins cannot call it.",
+    "description": "Make voxmate's characters speak, perform multi-character scenes and follow playback. Listens on 127.0.0.1 only (port 50080 by default, configurable in the app). Every request needs a loopback `Host` header (`127.0.0.1`, `localhost` or `[::1]`). CORS preflights are never answered, so web pages on other origins cannot call it.",
     "contact": {
       "name": "xorphitus"
     },
@@ -23,7 +23,7 @@
       "post": {
         "tags": [],
         "summary": "Make a VOICEVOX `audio_query` to edit.",
-        "description": "Returns the engine's query for the text, unchanged. Edit it and send it\nback as `audioQuery` in `POST /speak`, so clients need not know the\nengine's URL.",
+        "description": "Returns the engine's query for the text, unchanged. Edit it and send it\nback as `audioQuery` in `POST /speak` or a scene line, so clients need\nnot know the engine's URL.",
         "operationId": "audio_query",
         "requestBody": {
           "content": {
@@ -115,6 +115,68 @@
         }
       }
     },
+    "/characters": {
+      "get": {
+        "tags": [],
+        "summary": "The characters set up in the app.",
+        "operationId": "characters",
+        "responses": {
+          "200": {
+            "description": "Characters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CharacterInfo"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": [],
+        "summary": "Stream of playback events (Server-Sent Events).",
+        "description": "Every line from every producer (API, UI, LLM) is reported:\n- `event: line`, data `LineEvent`: a line changed state\n  (`queued → preparing → speaking → done | interrupted | skipped | failed`).\n- `event: log`, data `LogEntry`: a line was heard and added to the\n  conversation log.\n\nOnly events after the connection opens are sent.",
+        "operationId": "events",
+        "responses": {
+          "200": {
+            "description": "`text/event-stream` of `line` (LineEvent) and `log` (LogEntry) events",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [],
@@ -169,17 +231,17 @@
         }
       }
     },
-    "/speak": {
+    "/scenes": {
       "post": {
         "tags": [],
-        "summary": "Queue text for the avatar to speak.",
-        "description": "Requests from the API and the app share one queue, so utterances never\noverlap. The response is sent as soon as the text is queued.",
-        "operationId": "speak",
+        "summary": "Queue a scene: several lines, possibly by different characters.",
+        "description": "The lines are performed in order and stay together in the queue. Follow\nthem with `GET /scenes/{id}` or `GET /events`, and cancel the rest with\n`DELETE /scenes/{id}`.",
+        "operationId": "post_scene",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SpeakRequest"
+                "$ref": "#/components/schemas/SceneRequest"
               }
             }
           },
@@ -191,13 +253,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SpeakAccepted"
+                  "$ref": "#/components/schemas/SceneAccepted"
                 }
               }
             }
           },
           "400": {
-            "description": "Blank or too long text, a malformed character id, an out-of-range voice parameter, an `audioQuery` without `accent_phrases`, or malformed JSON",
+            "description": "No lines, more than 200, or a line `/speak` would reject (the message names it, e.g. `lines[2]: ...`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -237,7 +299,260 @@
             }
           },
           "422": {
-            "description": "JSON does not match `SpeakRequest`",
+            "description": "JSON does not match `SceneRequest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The app is still starting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scenes/{id}": {
+      "get": {
+        "tags": [],
+        "summary": "The state of each line of a scene.",
+        "description": "The 100 most recent scenes are kept.",
+        "operationId": "get_scene",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scene id from `POST /scenes`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scene status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or forgotten scene",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [],
+        "summary": "Cancel the rest of a scene.",
+        "description": "Lines not yet spoken are skipped, and the current line is interrupted if\nit belongs to the scene. Cancelling happens in the app shortly after the\nresponse; the returned status may still show lines as queued.",
+        "operationId": "delete_scene",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scene id from `POST /scenes`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancelling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or forgotten scene",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The app is still starting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/speak": {
+      "post": {
+        "tags": [],
+        "summary": "Queue one line.",
+        "description": "Lines from the API and the app share one queue, so they never overlap.\nThe response is sent as soon as the line is queued. For several lines that\nbelong together, use `POST /scenes`.",
+        "operationId": "speak",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Queued (not yet spoken)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Blank or too long text, a malformed character id, an out-of-range voice parameter, a bad `audioQuery`, or malformed JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body larger than 1 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content type is not `application/json`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "JSON does not match `LineRequest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The app is still starting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/speakers": {
+      "get": {
+        "tags": [],
+        "summary": "The VOICEVOX engine's speakers and their styles.",
+        "description": "A style's `id` is what `speaker` takes elsewhere.",
+        "operationId": "speakers",
+        "responses": {
+          "200": {
+            "description": "Speakers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Speaker"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The VOICEVOX engine is unreachable or failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -299,6 +614,40 @@
           }
         }
       },
+      "CharacterInfo": {
+        "type": "object",
+        "description": "A character as set up in the app.",
+        "required": [
+          "id",
+          "name",
+          "speaker",
+          "voice",
+          "onStage"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "default"
+          },
+          "name": {
+            "type": "string"
+          },
+          "speaker": {
+            "type": "integer",
+            "format": "int32",
+            "description": "VOICEVOX style id.",
+            "minimum": 0
+          },
+          "voice": {
+            "$ref": "#/components/schemas/VoiceParams",
+            "description": "Default voice parameters; lines override them."
+          },
+          "onStage": {
+            "type": "boolean",
+            "description": "Whether this is the character on stage, used by lines that name none."
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -321,20 +670,50 @@
           }
         }
       },
-      "SpeakAccepted": {
+      "LineEvent": {
         "type": "object",
-        "description": "The text was queued. It is spoken after anything already in the queue,\nso this does not mean it has been spoken.",
+        "description": "A line changed state.",
         "required": [
-          "status"
+          "lineId",
+          "character",
+          "text",
+          "source",
+          "state"
         ],
         "properties": {
-          "status": {
-            "$ref": "#/components/schemas/SpeakStatus"
+          "lineId": {
+            "type": "string"
+          },
+          "sceneId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "character": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Producer: `api`, `ui`, `llm`, ..."
+          },
+          "state": {
+            "$ref": "#/components/schemas/LineState"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
-      "SpeakRequest": {
+      "LineRequest": {
         "type": "object",
+        "description": "One line to perform. Mirrored by `LineRequest` in src/speech/LocalApiSource.ts.",
         "properties": {
           "text": {
             "type": "string",
@@ -347,7 +726,7 @@
               "string",
               "null"
             ],
-            "description": "Id of the character who speaks, as shown in the app's character\nsettings. Omit it to use the character on stage. An id the app doesn't\nknow is accepted here and reported as an error in the app.",
+            "description": "Id of the character who speaks (`GET /characters`). Omit it to use\nthe character on stage. An id the app doesn't know fails the line.",
             "example": "default",
             "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
           },
@@ -357,7 +736,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "VOICEVOX style id (`GET /speakers` on the engine). Overrides the\ncharacter's voice. Omit it to use the character's speaker.",
+            "description": "VOICEVOX style id (`GET /speakers`). Overrides the character's voice.\nOmit it to use the character's speaker.",
             "example": 3,
             "minimum": 0
           },
@@ -377,7 +756,185 @@
               "object",
               "null"
             ],
-            "description": "A complete VOICEVOX `audio_query` (e.g. from `POST /audio_query`,\nedited) to synthesize as is, for control over accents, mora pitch and\nlength, and pauses. Pitch values belong to the speaker the query was\nmade for; another speaker works but sounds off. The engine's\nvalidation errors are reported in the app, as a failed line."
+            "description": "A complete VOICEVOX `audio_query` (e.g. from `POST /audio_query`,\nedited) to synthesize as is, for control over accents, mora pitch and\nlength, and pauses. Pitch values belong to the speaker the query was\nmade for; another speaker works but sounds off. The engine's\nvalidation errors fail the line."
+          },
+          "direction": {
+            "type": "boolean",
+            "description": "A stage direction, e.g. \"(The topic changes to dinner.)\": never\nspoken, only added to the conversation log. Needs `text`; can't have\nan `audioQuery`."
+          }
+        }
+      },
+      "LineState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "preparing",
+          "speaking",
+          "done",
+          "interrupted",
+          "skipped",
+          "failed"
+        ]
+      },
+      "LineStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "character": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Known once the app has queued the line (it fills in the character on stage)."
+          },
+          "text": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LineState"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "LogEntry": {
+        "type": "object",
+        "description": "A line was heard and added to the conversation log.",
+        "required": [
+          "lineId",
+          "character",
+          "text",
+          "source",
+          "time"
+        ],
+        "properties": {
+          "lineId": {
+            "type": "string"
+          },
+          "character": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "time": {
+            "type": "number",
+            "format": "double",
+            "description": "Milliseconds since the Unix epoch, when the line ended."
+          },
+          "sceneId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "interrupted": {
+            "type": "boolean",
+            "description": "Stopped partway; listeners may not have heard all of `text`."
+          },
+          "direction": {
+            "type": "boolean",
+            "description": "A stage direction (logged, never spoken)."
+          }
+        }
+      },
+      "Placement": {
+        "type": "string",
+        "enum": [
+          "append",
+          "next"
+        ]
+      },
+      "SceneAccepted": {
+        "type": "object",
+        "description": "The scene was queued. Follow it with `GET /scenes/{id}` or `GET /events`.",
+        "required": [
+          "id",
+          "lineIds"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "lineIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "In the order of the request's `lines`."
+          }
+        }
+      },
+      "SceneRequest": {
+        "type": "object",
+        "required": [
+          "lines"
+        ],
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LineRequest"
+            },
+            "description": "1 to 200 lines, performed in order and kept together in the queue.",
+            "maxItems": 200,
+            "minItems": 1
+          },
+          "placement": {
+            "$ref": "#/components/schemas/Placement"
+          }
+        }
+      },
+      "SceneStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "finished",
+          "lines"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "finished": {
+            "type": "boolean",
+            "description": "Every line has reached a final state."
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LineStatus"
+            }
+          }
+        }
+      },
+      "SpeakAccepted": {
+        "type": "object",
+        "description": "The line was queued. It is spoken after anything already in the queue,\nso this does not mean it has been spoken; follow `lineId` on `GET /events`.",
+        "required": [
+          "status",
+          "lineId"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/SpeakStatus"
+          },
+          "lineId": {
+            "type": "string"
           }
         }
       },
@@ -386,6 +943,47 @@
         "enum": [
           "queued"
         ]
+      },
+      "Speaker": {
+        "type": "object",
+        "required": [
+          "name",
+          "speaker_uuid",
+          "styles"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "speaker_uuid": {
+            "type": "string"
+          },
+          "styles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpeakerStyle"
+            }
+          }
+        }
+      },
+      "SpeakerStyle": {
+        "type": "object",
+        "required": [
+          "name",
+          "id"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Style name, e.g. ノーマル."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "What `speaker` takes elsewhere in the API.",
+            "minimum": 0
+          }
+        }
       },
       "VoiceParams": {
         "type": "object",

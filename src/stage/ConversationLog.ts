@@ -29,9 +29,9 @@ export class ConversationLog {
     private readonly max = MAX_LOG_ENTRIES,
   ) {}
 
-  /** Feed it every StagePlayer event. */
-  record({ line, state }: LineEvent): void {
-    if (state !== "done" && state !== "interrupted") return;
+  /** Feed it every StagePlayer event. Returns the entry it added, if any. */
+  record({ line, state }: LineEvent): LogEntry | null {
+    if (state !== "done" && state !== "interrupted") return null;
     const entry: LogEntry = {
       lineId: line.id,
       character: line.character,
@@ -44,6 +44,7 @@ export class ConversationLog {
     if (line.direction) entry.direction = true;
     this.log.push(entry);
     if (this.log.length > this.max) this.log.splice(0, this.log.length - this.max);
+    return entry;
   }
 
   /** The most recent `count` entries (all if omitted), oldest first. */
