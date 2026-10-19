@@ -91,6 +91,12 @@ curl localhost:50080/health
 API and UI requests share one queue, so utterances never overlap. `/speak`
 returns as soon as the text is queued.
 
+The full spec is [`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1, generated
+from `api.rs`), and the running app serves the same document at
+`GET /openapi.json`. After changing the API, regenerate the committed copy with
+`(cd src-tauri && UPDATE_OPENAPI=1 cargo test api::)`; `cargo test` fails while
+it is stale.
+
 The API rejects requests unless:
 
 - the `Host` header is a loopback name, which blocks DNS rebinding, and
@@ -127,7 +133,7 @@ src/
   config.ts                persisted settings
 src-tauri/src/
   voicevox.rs              reqwest client: /speakers, /audio_query, /synthesis
-  api.rs                   axum server: POST /speak, GET /health
+  api.rs                   axum server: POST /speak, GET /health, GET /openapi.json
   lib.rs                   commands, plugins, window creation, API startup
 ```
 

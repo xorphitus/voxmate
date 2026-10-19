@@ -1,0 +1,229 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "voxmate Local API",
+    "description": "Make the voxmate avatar speak. Listens on 127.0.0.1 only (port 50080 by default, configurable in the app). Every request needs a loopback `Host` header (`127.0.0.1`, `localhost` or `[::1]`). CORS preflights are never answered, so web pages on other origins cannot call it.",
+    "contact": {
+      "name": "xorphitus"
+    },
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:50080",
+      "description": "Default port"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [],
+        "summary": "Check that voxmate is running.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [],
+        "summary": "This OpenAPI document.",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI document",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/speak": {
+      "post": {
+        "tags": [],
+        "summary": "Queue text for the avatar to speak.",
+        "description": "Requests from the API and the app share one queue, so utterances never\noverlap. The response is sent as soon as the text is queued.",
+        "operationId": "speak",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeakRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Queued (not yet spoken)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Blank or too long text, or malformed JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content type is not `application/json`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "JSON does not match `SpeakRequest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable reason.",
+            "example": "text must not be empty"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "ok",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string",
+            "example": "voxmate"
+          },
+          "version": {
+            "type": "string",
+            "description": "voxmate version.",
+            "example": "0.1.0"
+          }
+        }
+      },
+      "SpeakAccepted": {
+        "type": "object",
+        "description": "The text was queued. It is spoken after anything already in the queue,\nso this does not mean it has been spoken.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/SpeakStatus"
+          }
+        }
+      },
+      "SpeakRequest": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to speak. Leading and trailing whitespace is trimmed, and the\ntrimmed text must be 1 to 2000 characters (Unicode scalar values).",
+            "example": "こんにちは",
+            "maxLength": 2000,
+            "minLength": 1
+          },
+          "speaker": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "VOICEVOX style id (`GET /speakers` on the engine). Omit it to use the\nspeaker selected in the app.",
+            "example": 3,
+            "minimum": 0
+          }
+        }
+      },
+      "SpeakStatus": {
+        "type": "string",
+        "enum": [
+          "queued"
+        ]
+      }
+    }
+  }
+}

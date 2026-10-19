@@ -5,6 +5,10 @@
 //! whose `Host` is not a loopback name (DNS rebinding) and only accepts
 //! `application/json` bodies, which browsers cannot send cross-origin without
 //! a CORS preflight that this server never approves.
+//!
+//! The OpenAPI spec is generated from the types and handlers below with
+//! `utoipa`, served at `GET /openapi.json` and committed as
+//! `docs/openapi.json` (a test fails when the two differ).
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
@@ -19,23 +23,62 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use utoipa::{OpenApi, ToSchema};
 
 pub const DEFAULT_PORT: u16 = 50080;
 pub const MAX_TEXT_CHARS: usize = 2000;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpeakRequest {
+    /// Text to speak. Leading and trailing whitespace is trimmed, and the
+    /// trimmed text must be 1 to 2000 characters (Unicode scalar values).
+    #[schema(example = "こんにちは", min_length = 1, max_length = 2000)]
     pub text: String,
+    /// VOICEVOX style id (`GET /speakers` on the engine). Omit it to use the
+    /// speaker selected in the app.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = 3)]
     pub speaker: Option<u32>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeakStatus {
+    Queued,
+}
+
+/// The text was queued. It is spoken after anything already in the queue,
+/// so this does not mean it has been spoken.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SpeakAccepted {
+    pub status: SpeakStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiError {
+    /// Human-readable reason.
+    #[schema(example = "text must not be empty")]
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Health {
+    pub ok: bool,
+    #[schema(example = "voxmate")]
+    pub name: String,
+    /// voxmate version.
+    #[schema(example = "0.1.0")]
+    pub version: String,
 }
 
 /// Receives validated speak requests (in the app: emits a Tauri event).
 pub type SpeakSink = Arc<dyn Fn(SpeakRequest) + Send + Sync>;
 
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, Json(json!({ "error": message.into() }))).into_response()
+    let body = ApiError {
+        error: message.into(),
+    };
+    (status, Json(body)).into_response()
 }
 
 pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
@@ -70,6 +113,22 @@ fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
     );
 }
 
+/// Queue text for the avatar to speak.
+///
+/// Requests from the API and the app share one queue, so utterances never
+/// overlap. The response is sent as soon as the text is queued.
+#[utoipa::path(
+    post,
+    path = "/speak",
+    request_body(content = SpeakRequest, content_type = "application/json"),
+    responses(
+        (status = 202, description = "Queued (not yet spoken)", body = SpeakAccepted),
+        (status = 400, description = "Blank or too long text, or malformed JSON", body = ApiError),
+        (status = 403, description = "`Host` is not a loopback name", body = ApiError),
+        (status = 415, description = "Content type is not `application/json`", body = ApiError),
+        (status = 422, description = "JSON does not match `SpeakRequest`", body = ApiError),
+    )
+)]
 async fn speak(
     State(sink): State<SpeakSink>,
     client: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -83,15 +142,55 @@ async fn speak(
         Ok(req) => {
             log_request(client.map(|Extension(ConnectInfo(addr))| addr), &req);
             sink(req);
-            (StatusCode::ACCEPTED, Json(json!({ "status": "queued" }))).into_response()
+            let body = SpeakAccepted {
+                status: SpeakStatus::Queued,
+            };
+            (StatusCode::ACCEPTED, Json(body)).into_response()
         }
         Err(message) => error(StatusCode::BAD_REQUEST, message),
     }
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "ok": true, "name": "voxmate", "version": env!("CARGO_PKG_VERSION") }))
+/// Check that voxmate is running.
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Running", body = Health),
+        (status = 403, description = "`Host` is not a loopback name", body = ApiError),
+    )
+)]
+async fn health() -> Json<Health> {
+    Json(Health {
+        ok: true,
+        name: "voxmate".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    })
 }
+
+/// This OpenAPI document.
+#[utoipa::path(
+    get,
+    path = "/openapi.json",
+    responses(
+        (status = 200, description = "OpenAPI document", content_type = "application/json"),
+        (status = 403, description = "`Host` is not a loopback name", body = ApiError),
+    )
+)]
+async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "voxmate Local API",
+        description = "Make the voxmate avatar speak. Listens on 127.0.0.1 only (port 50080 by default, configurable in the app). Every request needs a loopback `Host` header (`127.0.0.1`, `localhost` or `[::1]`). CORS preflights are never answered, so web pages on other origins cannot call it."
+    ),
+    servers((url = "http://127.0.0.1:50080", description = "Default port")),
+    paths(speak, health, openapi_json)
+)]
+pub struct ApiDoc;
 
 fn is_loopback_host(host: &str) -> bool {
     let name = match host.rsplit_once(':') {
@@ -117,6 +216,7 @@ pub fn router(sink: SpeakSink) -> Router {
     Router::new()
         .route("/speak", post(speak))
         .route("/health", get(health))
+        .route("/openapi.json", get(openapi_json))
         .layer(middleware::from_fn(require_loopback_host))
         .with_state(sink)
 }
@@ -141,6 +241,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
+    use serde_json::json;
     use std::sync::Mutex;
     use tower::ServiceExt;
 
@@ -271,6 +372,43 @@ mod tests {
         let res = router(sink).oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(body_json(res).await["ok"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn serves_openapi() {
+        let (sink, _) = capture();
+        let req = Request::get("/openapi.json")
+            .header(header::HOST, "localhost:50080")
+            .body(Body::empty())
+            .unwrap();
+        let res = router(sink).oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let spec = body_json(res).await;
+        assert!(spec["paths"]["/speak"]["post"].is_object());
+    }
+
+    /// The committed spec is for reading without the app running, so it must
+    /// match the generated one. `UPDATE_OPENAPI=1 cargo test` rewrites it.
+    #[test]
+    fn committed_openapi_is_up_to_date() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/openapi.json");
+        let generated = ApiDoc::openapi().to_pretty_json().unwrap() + "\n";
+        if std::env::var_os("UPDATE_OPENAPI").is_some() {
+            std::fs::write(path, &generated).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(
+            committed == generated,
+            "docs/openapi.json is stale; run `UPDATE_OPENAPI=1 cargo test api::` in src-tauri"
+        );
+    }
+
+    #[test]
+    fn spec_text_limit_matches_validation() {
+        let spec = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let text = &spec["components"]["schemas"]["SpeakRequest"]["properties"]["text"];
+        assert_eq!(text["maxLength"], json!(MAX_TEXT_CHARS));
     }
 
     #[test]
