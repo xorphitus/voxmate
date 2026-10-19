@@ -18,6 +18,7 @@ pnpm vitest run -t "name"          # single test by name
 pnpm typecheck                     # tsc --noEmit
 (cd src-tauri && cargo test)       # Rust: voicevox client (wiremock) + local API
 (cd src-tauri && cargo test api::) # Rust tests in one module
+(cd src-tauri && cargo fmt)        # rustfmt, max_width 120 (src-tauri/rustfmt.toml)
 ```
 
 Running the app needs a VOICEVOX engine on `127.0.0.1:50021`. Blank window on Linux: `WEBKIT_DISABLE_DMABUF_RENDERER=1`.

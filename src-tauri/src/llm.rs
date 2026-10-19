@@ -87,7 +87,11 @@ pub fn parse_chunk(data: &str) -> Result<Chunk> {
         .pointer("/choices/0/delta/content")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    Ok(if delta.is_empty() { Chunk::Skip } else { Chunk::Delta(delta.to_string()) })
+    Ok(if delta.is_empty() {
+        Chunk::Skip
+    } else {
+        Chunk::Delta(delta.to_string())
+    })
 }
 
 fn parse_base_url(raw: &str) -> Result<Url> {
@@ -123,18 +127,28 @@ impl LlmClient {
     ) -> Result<()> {
         let base = parse_base_url(base_url)?;
         let url = format!("{}/v1/chat/completions", base.as_str().trim_end_matches('/'));
-        let body = ChatRequest { model, messages, stream: true };
+        let body = ChatRequest {
+            model,
+            messages,
+            stream: true,
+        };
         let mut res = self
             .http
             .post(&url)
             .json(&body)
             .send()
             .await
-            .map_err(|source| Error::Unreachable { url: base.to_string(), source })?;
+            .map_err(|source| Error::Unreachable {
+                url: base.to_string(),
+                source,
+            })?;
         let status = res.status();
         if !status.is_success() {
             let body = res.text().await.unwrap_or_default();
-            return Err(Error::Status { status: status.as_u16(), body });
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         let mut parser = SseParser::default();
@@ -196,7 +210,13 @@ mod tests {
     #[tokio::test]
     async fn streams_deltas_until_done() {
         let server = MockServer::start().await;
-        let body = [delta("こんにちは。"), delta("元気"), "data: [DONE]\n\n".into(), delta("ignored")].concat();
+        let body = [
+            delta("こんにちは。"),
+            delta("元気"),
+            "data: [DONE]\n\n".into(),
+            delta("ignored"),
+        ]
+        .concat();
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .and(body_partial_json(json!({"model": "qwen", "stream": true})))
@@ -205,7 +225,10 @@ mod tests {
             .await;
 
         let client = LlmClient::new().unwrap();
-        let messages = [ChatMessage { role: "user".into(), content: "hi".into() }];
+        let messages = [ChatMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }];
         let mut got = Vec::new();
         client
             .chat(&server.uri(), "qwen", &messages, |d| got.push(d))

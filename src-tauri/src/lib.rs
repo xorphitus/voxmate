@@ -68,10 +68,7 @@ async fn voicevox_synthesize(
     speaker: u32,
     client: State<'_, VoicevoxClient>,
 ) -> Result<tauri::ipc::Response, String> {
-    let synthesis = client
-        .synthesize(&text, speaker)
-        .await
-        .map_err(|e| e.to_string())?;
+    let synthesis = client.synthesize(&text, speaker).await.map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(synthesis.pack()))
 }
 

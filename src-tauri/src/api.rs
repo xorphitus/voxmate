@@ -91,9 +91,7 @@ pub struct Health {
 pub type SpeakSink = Arc<dyn Fn(SpeakRequest) + Send + Sync>;
 
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
-    let body = ApiError {
-        error: message.into(),
-    };
+    let body = ApiError { error: message.into() };
     (status, Json(body)).into_response()
 }
 
@@ -108,8 +106,7 @@ pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
     if let Some(id) = &req.character {
         if !is_character_id(id) {
             return Err(
-                "character must be 1-64 characters of a-z, 0-9, - and _, starting with a letter or digit"
-                    .into(),
+                "character must be 1-64 characters of a-z, 0-9, - and _, starting with a letter or digit".into(),
             );
         }
     }
@@ -358,10 +355,7 @@ mod tests {
         let (sink, _) = capture();
         let long = "あ".repeat(MAX_TEXT_CHARS + 1);
         let res = router(sink)
-            .oneshot(post_speak(
-                &json!({ "text": long }).to_string(),
-                "application/json",
-            ))
+            .oneshot(post_speak(&json!({ "text": long }).to_string(), "application/json"))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);

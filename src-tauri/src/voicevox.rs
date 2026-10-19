@@ -103,11 +103,7 @@ impl VoicevoxClient {
         format!("{}{}", self.base_url(), path)
     }
 
-    async fn send(
-        &self,
-        endpoint: &'static str,
-        req: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response> {
+    async fn send(&self, endpoint: &'static str, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         let res = req.send().await.map_err(|source| Error::Unreachable {
             url: self.base_url(),
             source,
@@ -237,9 +233,7 @@ mod tests {
         let client = VoicevoxClient::new(&server.uri()).unwrap();
         let err = client.synthesize("x", 9999).await.unwrap_err();
         match err {
-            Error::Status {
-                endpoint, status, ..
-            } => {
+            Error::Status { endpoint, status, .. } => {
                 assert_eq!(endpoint, "/audio_query");
                 assert_eq!(status, 422);
             }
@@ -251,10 +245,7 @@ mod tests {
     async fn reports_unreachable_engine() {
         // Port 9 (discard) is almost never listening on loopback.
         let client = VoicevoxClient::new("http://127.0.0.1:9").unwrap();
-        assert!(matches!(
-            client.speakers().await,
-            Err(Error::Unreachable { .. })
-        ));
+        assert!(matches!(client.speakers().await, Err(Error::Unreachable { .. })));
     }
 
     #[test]

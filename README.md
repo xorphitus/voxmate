@@ -127,6 +127,7 @@ options.
 pnpm test                         # vitest: timeline, WAV, queue, lip sync
 pnpm typecheck
 (cd src-tauri && cargo test)      # VOICEVOX client (wiremock) + local API
+(cd src-tauri && cargo fmt)       # rustfmt.toml: max_width = 120
 ```
 
 ### Layout
