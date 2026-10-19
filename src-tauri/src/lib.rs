@@ -2,13 +2,14 @@ mod api;
 mod llm;
 mod stage;
 mod voicevox;
+mod wav;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
@@ -196,6 +197,43 @@ fn write_scene_file(path: String, contents: String) -> Result<(), String> {
         return Err("the scene is too large to save".into());
     }
     std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
+/// One line of a WAV export, resolved by the editor (speaker and voice).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportLine {
+    text: String,
+    speaker: u32,
+    voice: Option<VoiceParams>,
+    query: Option<serde_json::Value>,
+}
+
+/// Synthesizes `lines` in order and writes them to `path` as one WAV, with
+/// `gap_seconds` of silence between lines.
+#[tauri::command]
+async fn export_wav(
+    path: String,
+    lines: Vec<ExportLine>,
+    gap_seconds: f64,
+    client: State<'_, Arc<VoicevoxClient>>,
+) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if path.extension().and_then(|e| e.to_str()) != Some("wav") {
+        return Err("export to a .wav file".into());
+    }
+    let mut parts = Vec::with_capacity(lines.len());
+    for (i, line) in lines.into_iter().enumerate() {
+        let voice = line.voice.unwrap_or_default();
+        voice.validate()?;
+        let synthesis = client
+            .synthesize(&line.text, line.speaker, &voice, line.query)
+            .await
+            .map_err(|e| format!("line {}: {e}", i + 1))?;
+        parts.push(synthesis.wav);
+    }
+    let wav = wav::join(&parts, gap_seconds).map_err(|e| e.to_string())?;
+    std::fs::write(path, wav).map_err(|e| e.to_string())
 }
 
 /// Lets the asset protocol serve a user-picked model and the files next to it
@@ -386,6 +424,7 @@ pub fn run() {
             open_editor,
             read_scene_file,
             write_scene_file,
+            export_wav,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxmate");

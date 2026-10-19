@@ -13,6 +13,7 @@ import { EDITOR_PLAY, EDITOR_STOP, type EditorPlay, STAGE_LINE, type StageLine }
 import {
   blankLine,
   type EditorLine,
+  exportLines,
   fromSceneFile,
   insertLine,
   moveLine,
@@ -25,6 +26,8 @@ import {
 
 /** The voice fields shown per line; the rest are kept from loaded files. */
 const VOICE_EDITED: VoiceField[] = ["speed", "pitch", "intonation", "volume"];
+/** Silence between lines in a WAV export, on top of each line's own pre/post silence. */
+const EXPORT_GAP_SECONDS = 0.3;
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -143,6 +146,7 @@ async function main() {
       { className: "actions" },
       button("▶", "Play this line", () => void play(index, index + 1)),
       button("▶…", "Play from here", () => void play(index)),
+      button("⤓", "Export this line as WAV", () => void exportWav(index, index + 1)),
       button("＋", "Add a line below", () => {
         lines = insertLine(lines, index + 1, blankLine(lines[index].character));
         render();
@@ -200,6 +204,30 @@ async function main() {
     info(`Playing ${chosen.length} line${chosen.length > 1 ? "s" : ""}…`);
   }
 
+  /** Synthesizes lines[from..to) into one WAV file the user picks. */
+  async function exportWav(from = 0, to = lines.length) {
+    let chosen;
+    try {
+      chosen = exportLines(lines.slice(from, to), characters);
+    } catch (e) {
+      fail(`Cannot export: ${errorText(e)}`);
+      return;
+    }
+    if (!chosen.length) {
+      fail("Nothing to export: no spoken lines.");
+      return;
+    }
+    const path = await save({ defaultPath: "scene.wav", filters: [{ name: "WAV", extensions: ["wav"] }] });
+    if (!path) return;
+    info(`Synthesizing ${chosen.length} line${chosen.length > 1 ? "s" : ""}…`);
+    try {
+      await invoke("export_wav", { path, lines: chosen, gapSeconds: EXPORT_GAP_SECONDS });
+      info(`Exported ${path.split("/").pop()}`);
+    } catch (e) {
+      fail(`Could not export: ${errorText(e)}`);
+    }
+  }
+
   async function stop() {
     if (playing) await emit(EDITOR_STOP, { sceneId: playing.sceneId });
     playing = null;
@@ -221,6 +249,7 @@ async function main() {
     render();
   });
   $("play-all").addEventListener("click", () => void play());
+  $("export").addEventListener("click", () => void exportWav());
   $("stop").addEventListener("click", () => {
     void stop();
     info("Stopped.");

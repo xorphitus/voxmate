@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blankLine,
+  exportLines,
   type EditorLine,
   fromSceneFile,
   insertLine,
@@ -71,5 +72,28 @@ describe("scene files", () => {
     expect(fromSceneFile({ lines: [{ text: "hi" }] }, "metan")[0].character).toBe("metan");
     expect(() => fromSceneFile({ text: "hi" }, "z")).toThrow(/not a scene file/);
     expect(() => fromSceneFile({ lines: [{ character: "z" }] }, "z")).toThrow(/lines\[0\] has no text/);
+  });
+});
+
+describe("exportLines", () => {
+  const characters = [
+    { id: "zunda", name: "Z", modelPath: null, speaker: 3, persona: "", llmModel: "", voice: { speed: 1.2 }, names: {} },
+  ];
+
+  it("resolves speaker and voice like the stage, skipping directions and blanks", () => {
+    const lines = [
+      line("やあ", { voice: { pitch: 0.1 } }),
+      line("(間)", { direction: true }),
+      line(" "),
+      line("q", { speaker: 8, audioQuery: { accent_phrases: [] } as never }),
+    ];
+    expect(exportLines(lines, characters)).toEqual([
+      { text: "やあ", speaker: 3, voice: { speed: 1.2, pitch: 0.1 } },
+      { text: "q", speaker: 8, voice: {}, query: { accent_phrases: [] } },
+    ]);
+  });
+
+  it("names an unknown character", () => {
+    expect(() => exportLines([line("a", { character: "ghost" })], characters)).toThrow(/unknown character "ghost"/);
   });
 });

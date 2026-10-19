@@ -1,5 +1,6 @@
 import type { Cue } from "../avatar/cues";
-import { sanitizeVoice, type VoiceParams } from "../voice/params";
+import type { Character } from "../characters";
+import { lineVoice, sanitizeVoice, type VoiceParams } from "../voice/params";
 import type { AudioQuery } from "../voice/timeline";
 
 /**
@@ -106,4 +107,32 @@ export function fromSceneFile(json: unknown, fallbackCharacter: string): EditorL
       ...(typeof r.speaker === "number" && { speaker: r.speaker }),
     };
   });
+}
+
+/** A line as `export_wav` takes it: speaker and voice already resolved. */
+export interface ExportLine {
+  text: string;
+  speaker: number;
+  voice: VoiceParams;
+  query?: AudioQuery;
+}
+
+/**
+ * What a WAV export synthesizes, resolved the way the stage does it (the
+ * line's speaker and voice over the character's). Stage directions and blank
+ * lines aren't heard, so they're left out.
+ */
+export function exportLines(lines: EditorLine[], characters: Character[]): ExportLine[] {
+  return lines
+    .filter((l) => !l.direction && (l.text.trim() || l.audioQuery))
+    .map((l) => {
+      const character = characters.find((c) => c.id === l.character);
+      if (!character) throw new Error(`unknown character "${l.character}"`);
+      return {
+        text: l.text.trim(),
+        speaker: l.speaker ?? character.speaker,
+        voice: lineVoice(character.voice, { voice: sanitizeVoice(l.voice), audioQuery: l.audioQuery }),
+        ...(l.audioQuery && { query: l.audioQuery }),
+      };
+    });
 }
