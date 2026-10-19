@@ -16,7 +16,7 @@ import { StagePlayer } from "./stage/StagePlayer";
 import { Controls, type SimpleSetting } from "./ui/controls";
 import { followTheme } from "./ui/theme";
 import { AudioPlayer } from "./voice/player";
-import { mergeVoice } from "./voice/params";
+import { lineVoice } from "./voice/params";
 import { buildTimeline, type Segment } from "./voice/timeline";
 import { fetchSpeakers, setVoicevoxUrl, synthesize } from "./voice/voicevox";
 
@@ -52,8 +52,9 @@ async function main() {
   const stagePlayer = new StagePlayer<Prepared>({
     async prepare(line) {
       const character = resolveCharacter(characters(), config.get("defaultCharacter"), line.character);
-      const voice = mergeVoice(character.voice, line.voice);
-      const { query, wav } = await synthesize(line.text, line.speaker ?? character.speaker, voice);
+      const voice = lineVoice(character.voice, line);
+      const speaker = line.speaker ?? character.speaker;
+      const { query, wav } = await synthesize(line.text, speaker, voice, line.audioQuery);
       return { buffer: await player.decode(wav), timeline: buildTimeline(query) };
     },
     async play(p) {

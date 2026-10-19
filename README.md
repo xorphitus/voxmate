@@ -94,10 +94,19 @@ curl -X POST localhost:50080/speak -H 'content-type: application/json' \
 curl -X POST localhost:50080/speak -H 'content-type: application/json' \
   -d '{"text":"ゆっくり話すのだ","voice":{"speed":0.8,"pitch":0.05}}'
 
+# Editor-level control: fetch the engine's audio_query, edit accents, mora
+# pitch/length or pauses, then speak it. "voice" still overrides its values.
+# A query belongs to its speaker; with another speaker it sounds off.
+curl -X POST localhost:50080/audio_query -H 'content-type: application/json' \
+  -d '{"text":"こんにちは","character":"default"}' > query.json
+curl -X POST localhost:50080/speak -H 'content-type: application/json' \
+  -d "{\"text\":\"こんにちは\",\"audioQuery\":$(cat query.json)}"
+
 curl localhost:50080/health
 ```
 
-API, UI and LLM lines share one queue, so they never overlap. `/speak`
+API, UI and LLM lines share one queue, so they never overlap. Request bodies are limited
+to 1 MiB. `/speak`
 returns as soon as the text is queued.
 
 The full spec is [`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1, generated
@@ -152,7 +161,7 @@ src/
   characters.ts            Character type, migration, id rules
 src-tauri/src/
   voicevox.rs              reqwest client: /speakers, /audio_query, /synthesis
-  api.rs                   axum server: POST /speak, GET /health, GET /openapi.json
+  api.rs                   axum server: POST /speak, POST /audio_query, GET /health, GET /openapi.json
   lib.rs                   commands, plugins, window creation, API startup
 ```
 

@@ -1,3 +1,4 @@
+import type { AudioQuery } from "../voice/timeline";
 import type { VoiceParams } from "../voice/params";
 
 /**
@@ -13,6 +14,12 @@ export interface Line {
   speaker?: number;
   /** Overrides the character's default voice, field by field. */
   voice?: VoiceParams;
+  /**
+   * A complete VOICEVOX `audio_query` to synthesize instead of making one
+   * from `text`. `voice` still overrides its values; the character's default
+   * voice does not. `text` is then only what the log shows.
+   */
+  audioQuery?: AudioQuery;
   /** Name of the TextSource it came from, for logs/UI. */
   source: string;
   /** Lines of one scene are queued together and can be cancelled together. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeVoice, sanitizeVoice } from "./params";
+import { lineVoice, mergeVoice, sanitizeVoice } from "./params";
 
 describe("mergeVoice", () => {
   it("lets the line override the character, field by field", () => {
@@ -18,5 +18,18 @@ describe("sanitizeVoice", () => {
       intonation: 0,
     });
     expect(sanitizeVoice(null)).toEqual({});
+  });
+});
+
+describe("lineVoice", () => {
+  const character = { speed: 1.2, pitch: 0.1 };
+
+  it("layers the line over the character's defaults", () => {
+    expect(lineVoice(character, { voice: { speed: 0.9 } })).toEqual({ speed: 0.9, pitch: 0.1 });
+  });
+
+  it("leaves a given audio_query's values alone except for the line's own voice", () => {
+    expect(lineVoice(character, { audioQuery: { accent_phrases: [] } })).toEqual({});
+    expect(lineVoice(character, { audioQuery: { accent_phrases: [] }, voice: { pitch: 0 } })).toEqual({ pitch: 0 });
   });
 });

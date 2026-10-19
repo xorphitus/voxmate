@@ -19,6 +19,102 @@
     }
   ],
   "paths": {
+    "/audio_query": {
+      "post": {
+        "tags": [],
+        "summary": "Make a VOICEVOX `audio_query` to edit.",
+        "description": "Returns the engine's query for the text, unchanged. Edit it and send it\nback as `audioQuery` in `POST /speak`, so clients need not know the\nengine's URL.",
+        "operationId": "audio_query",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudioQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The engine's `audio_query`",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "400": {
+            "description": "Blank or too long text, a malformed character id, or malformed JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No character with that id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body larger than 1 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content type is not `application/json`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "JSON does not match `AudioQueryRequest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The VOICEVOX engine is unreachable or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [],
@@ -101,7 +197,7 @@
             }
           },
           "400": {
-            "description": "Blank or too long text, a malformed character id, an out-of-range voice parameter, or malformed JSON",
+            "description": "Blank or too long text, a malformed character id, an out-of-range voice parameter, an `audioQuery` without `accent_phrases`, or malformed JSON",
             "content": {
               "application/json": {
                 "schema": {
@@ -112,6 +208,16 @@
           },
           "403": {
             "description": "`Host` is not a loopback name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body larger than 1 MiB",
             "content": {
               "application/json": {
                 "schema": {
@@ -159,6 +265,40 @@
           }
         }
       },
+      "AudioQueryRequest": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to make a query for, 1 to 2000 characters after trimming.",
+            "example": "こんにちは",
+            "maxLength": 2000,
+            "minLength": 1
+          },
+          "character": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Character whose speaker to use. Omit both this and `speaker` to use the\ncharacter on stage.",
+            "example": "default",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          },
+          "speaker": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "VOICEVOX style id; wins over `character`.",
+            "example": 3,
+            "minimum": 0
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -195,16 +335,12 @@
       },
       "SpeakRequest": {
         "type": "object",
-        "required": [
-          "text"
-        ],
         "properties": {
           "text": {
             "type": "string",
-            "description": "Text to speak. Leading and trailing whitespace is trimmed, and the\ntrimmed text must be 1 to 2000 characters (Unicode scalar values).",
+            "description": "Text to speak. Leading and trailing whitespace is trimmed, and the\ntrimmed text must be 1 to 2000 characters (Unicode scalar values).\nWith `audioQuery` it is what the conversation log shows; it may then be\nomitted, and the query's `kana` is used instead.",
             "example": "こんにちは",
-            "maxLength": 2000,
-            "minLength": 1
+            "maxLength": 2000
           },
           "character": {
             "type": [
@@ -229,12 +365,19 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/VoiceParams",
-                "description": "How the line sounds. Each field overrides the character's default,\nwhich overrides the engine's. Out-of-range values are rejected."
+                "description": "How the line sounds. Each field overrides the character's default,\nwhich overrides the engine's. With `audioQuery`, it overrides the\nquery's values and the character's defaults are not applied.\nOut-of-range values are rejected."
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "audioQuery": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "A complete VOICEVOX `audio_query` (e.g. from `POST /audio_query`,\nedited) to synthesize as is, for control over accents, mora pitch and\nlength, and pauses. Pitch values belong to the speaker the query was\nmade for; another speaker works but sounds off. The engine's\nvalidation errors are reported in the app, as a failed line."
           }
         }
       },

@@ -57,7 +57,7 @@ struct ApiStatus {
 }
 
 #[tauri::command]
-async fn voicevox_speakers(client: State<'_, VoicevoxClient>) -> Result<Vec<Speaker>, String> {
+async fn voicevox_speakers(client: State<'_, Arc<VoicevoxClient>>) -> Result<Vec<Speaker>, String> {
     client.speakers().await.map_err(|e| e.to_string())
 }
 
@@ -67,19 +67,20 @@ async fn voicevox_synthesize(
     text: String,
     speaker: u32,
     voice: Option<VoiceParams>,
-    client: State<'_, VoicevoxClient>,
+    query: Option<serde_json::Value>,
+    client: State<'_, Arc<VoicevoxClient>>,
 ) -> Result<tauri::ipc::Response, String> {
     let voice = voice.unwrap_or_default();
     voice.validate()?;
     let synthesis = client
-        .synthesize(&text, speaker, &voice)
+        .synthesize(&text, speaker, &voice, query)
         .await
         .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(synthesis.pack()))
 }
 
 #[tauri::command]
-fn set_voicevox_url(url: String, client: State<'_, VoicevoxClient>) -> Result<(), String> {
+fn set_voicevox_url(url: String, client: State<'_, Arc<VoicevoxClient>>) -> Result<(), String> {
     client.set_base_url(&url).map_err(|e| e.to_string())
 }
 
@@ -153,6 +154,35 @@ fn api_status(status: State<'_, Mutex<ApiStatus>>) -> ApiStatus {
     status.lock().unwrap().clone()
 }
 
+/// Answers `POST /audio_query`: resolves `character` from the saved settings,
+/// which the frontend keeps up to date, then asks the engine.
+fn audio_query_source(app: &AppHandle) -> api::AudioQuerySource {
+    let app = app.clone();
+    Arc::new(move |req: api::AudioQueryRequest| {
+        let app = app.clone();
+        Box::pin(async move {
+            let speaker = match req.speaker {
+                Some(speaker) => speaker,
+                None => {
+                    let store = app.store(SETTINGS_FILE).ok();
+                    let get = |key: &str| store.as_ref().and_then(|s| s.get(key));
+                    let default = get("defaultCharacter");
+                    api::resolve_speaker(
+                        get("characters").as_ref(),
+                        default.as_ref().and_then(|v| v.as_str()),
+                        req.character.as_deref(),
+                    )?
+                }
+            };
+            let client = app.state::<Arc<VoicevoxClient>>().inner().clone();
+            client
+                .audio_query(&req.text, speaker)
+                .await
+                .map_err(|e| api::QueryError::Engine(e.to_string()))
+        })
+    })
+}
+
 fn start_api(app: &AppHandle, settings: &StartupSettings) -> ApiStatus {
     let mut status = ApiStatus {
         enabled: settings.api_enabled,
@@ -166,13 +196,17 @@ fn start_api(app: &AppHandle, settings: &StartupSettings) -> ApiStatus {
     match api::bind(settings.api_port) {
         Ok(listener) => {
             let handle = app.clone();
-            let sink: api::SpeakSink = Arc::new(move |req: SpeakRequest| {
+            let speak: api::SpeakSink = Arc::new(move |req: SpeakRequest| {
                 if let Err(e) = handle.emit(SPEAK_EVENT, &req) {
                     eprintln!("failed to forward speak request: {e}");
                 }
             });
+            let state = api::ApiState {
+                speak,
+                audio_query: audio_query_source(app),
+            };
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = api::serve(listener, sink).await {
+                if let Err(e) = api::serve(listener, state).await {
                     eprintln!("local API server stopped: {e}");
                 }
             });
@@ -199,7 +233,8 @@ pub fn run() {
                 eprintln!("{e}; falling back to {}", voicevox::DEFAULT_URL);
                 VoicevoxClient::new(voicevox::DEFAULT_URL)
             })?;
-            app.manage(client);
+            let client = Arc::new(client);
+            app.manage(client.clone());
             app.manage(Arc::new(LlmClient::new()?));
             app.manage(LlmTask::default());
             app.manage(Mutex::new(start_api(&handle, &settings)));

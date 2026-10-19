@@ -10,31 +10,44 @@
 //! `utoipa`, served at `GET /openapi.json` and committed as
 //! `docs/openapi.json` (a test fails when the two differ).
 
+use std::future::Future;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{ConnectInfo, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use utoipa::{OpenApi, ToSchema};
 
 use crate::voicevox::VoiceParams;
 
 pub const DEFAULT_PORT: u16 = 50080;
 pub const MAX_TEXT_CHARS: usize = 2000;
+/// Speaker when no character has been saved yet; matches `DEFAULT_SPEAKER` in
+/// src/characters.ts.
+pub const DEFAULT_SPEAKER: u32 = 3;
+/// Request bodies above this are rejected with 413. An `audio_query` for the
+/// longest allowed text stays well below it.
+pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SpeakRequest {
     /// Text to speak. Leading and trailing whitespace is trimmed, and the
     /// trimmed text must be 1 to 2000 characters (Unicode scalar values).
-    #[schema(example = "こんにちは", min_length = 1, max_length = 2000)]
+    /// With `audioQuery` it is what the conversation log shows; it may then be
+    /// omitted, and the query's `kana` is used instead.
+    #[serde(default)]
+    #[schema(example = "こんにちは", max_length = 2000)]
     pub text: String,
     /// Id of the character who speaks, as shown in the app's character
     /// settings. Omit it to use the character on stage. An id the app doesn't
@@ -48,9 +61,19 @@ pub struct SpeakRequest {
     #[schema(example = 3)]
     pub speaker: Option<u32>,
     /// How the line sounds. Each field overrides the character's default,
-    /// which overrides the engine's. Out-of-range values are rejected.
+    /// which overrides the engine's. With `audioQuery`, it overrides the
+    /// query's values and the character's defaults are not applied.
+    /// Out-of-range values are rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<VoiceParams>,
+    /// A complete VOICEVOX `audio_query` (e.g. from `POST /audio_query`,
+    /// edited) to synthesize as is, for control over accents, mora pitch and
+    /// length, and pauses. Pitch values belong to the speaker the query was
+    /// made for; another speaker works but sounds off. The engine's
+    /// validation errors are reported in the app, as a failed line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub audio_query: Option<Value>,
 }
 
 /// Mirrors the id rule in src/characters.ts.
@@ -61,6 +84,22 @@ fn is_character_id(id: &str) -> bool {
         && bytes
             .iter()
             .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AudioQueryRequest {
+    /// Text to make a query for, 1 to 2000 characters after trimming.
+    #[schema(example = "こんにちは", min_length = 1, max_length = 2000)]
+    pub text: String,
+    /// Character whose speaker to use. Omit both this and `speaker` to use the
+    /// character on stage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "default", pattern = "^[a-z0-9][a-z0-9_-]{0,63}$")]
+    pub character: Option<String>,
+    /// VOICEVOX style id; wins over `character`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = 3)]
+    pub speaker: Option<u32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -96,35 +135,108 @@ pub struct Health {
 /// Receives validated speak requests (in the app: emits a Tauri event).
 pub type SpeakSink = Arc<dyn Fn(SpeakRequest) + Send + Sync>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryError {
+    /// The request named a character the app doesn't have.
+    UnknownCharacter(String),
+    /// The engine could not be reached or refused.
+    Engine(String),
+}
+
+pub type QueryFuture = Pin<Box<dyn Future<Output = Result<Value, QueryError>> + Send>>;
+/// Makes an `audio_query` for a validated request (in the app: asks VOICEVOX).
+pub type AudioQuerySource = Arc<dyn Fn(AudioQueryRequest) -> QueryFuture + Send + Sync>;
+
+#[derive(Clone)]
+pub struct ApiState {
+    pub speak: SpeakSink,
+    pub audio_query: AudioQuerySource,
+}
+
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
     let body = ApiError { error: message.into() };
     (status, Json(body)).into_response()
 }
 
-pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
-    let text = req.text.trim();
+fn validate_text(text: &str) -> Result<&str, String> {
+    let text = text.trim();
     if text.is_empty() {
         return Err("text must not be empty".into());
     }
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(format!("text is longer than {MAX_TEXT_CHARS} characters"));
     }
-    if let Some(id) = &req.character {
-        if !is_character_id(id) {
-            return Err(
-                "character must be 1-64 characters of a-z, 0-9, - and _, starting with a letter or digit".into(),
-            );
+    Ok(text)
+}
+
+fn validate_character(character: &Option<String>) -> Result<(), String> {
+    match character {
+        Some(id) if !is_character_id(id) => {
+            Err("character must be 1-64 characters of a-z, 0-9, - and _, starting with a letter or digit".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
+    if let Some(query) = &req.audio_query {
+        if !query.get("accent_phrases").is_some_and(Value::is_array) {
+            return Err("audioQuery must be an object with an accent_phrases array".into());
         }
     }
+    // With a query, fall back to its kana so the log has something to show.
+    let kana = req
+        .audio_query
+        .as_ref()
+        .and_then(|q| q.get("kana"))
+        .and_then(Value::as_str);
+    let text = match (req.text.trim(), kana) {
+        ("", Some(kana)) => kana,
+        _ => &req.text,
+    };
+    let text = validate_text(text)?;
+    validate_character(&req.character)?;
     if let Some(voice) = &req.voice {
         voice.validate()?;
     }
     Ok(SpeakRequest {
         text: text.to_string(),
-        character: req.character,
-        speaker: req.speaker,
-        voice: req.voice,
+        ..req
     })
+}
+
+pub fn validate_query_request(req: AudioQueryRequest) -> Result<AudioQueryRequest, String> {
+    let text = validate_text(&req.text)?.to_string();
+    validate_character(&req.character)?;
+    Ok(AudioQueryRequest { text, ..req })
+}
+
+/// The speaker for `/audio_query`, from the `characters` and
+/// `defaultCharacter` settings. Mirrors `resolveCharacter` in
+/// src/characters.ts: a named character must exist, and a missing default
+/// falls back to the first character.
+pub fn resolve_speaker(characters: Option<&Value>, default: Option<&str>, id: Option<&str>) -> Result<u32, QueryError> {
+    let list = characters
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let find = |wanted: &str| {
+        list.iter()
+            .find(|c| c.get("id").and_then(Value::as_str) == Some(wanted))
+    };
+    let character = match id {
+        Some(id) => find(id).ok_or_else(|| QueryError::UnknownCharacter(id.to_string()))?,
+        None => match default.and_then(find).or(list.first()) {
+            Some(c) => c,
+            // Before the app has saved any character: the app's default voice.
+            None => return Ok(DEFAULT_SPEAKER),
+        },
+    };
+    Ok(character
+        .get("speaker")
+        .and_then(Value::as_u64)
+        .and_then(|s| u32::try_from(s).ok())
+        .unwrap_or(DEFAULT_SPEAKER))
 }
 
 /// One stderr line per accepted request. Lets a client that re-sends text be
@@ -138,11 +250,12 @@ fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
         .map_or(0.0, |d| d.as_secs_f64());
     let client = client.map_or_else(|| "unknown".to_string(), |addr| addr.to_string());
     eprintln!(
-        "[{now:.3}] POST /speak from {client}: {} chars, hash {:016x}, character {:?}, speaker {:?}",
+        "[{now:.3}] POST /speak from {client}: {} chars, hash {:016x}, character {:?}, speaker {:?}, audio query {}",
         req.text.chars().count(),
         hasher.finish(),
         req.character,
         req.speaker,
+        req.audio_query.is_some(),
     );
 }
 
@@ -156,14 +269,15 @@ fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
     request_body(content = SpeakRequest, content_type = "application/json"),
     responses(
         (status = 202, description = "Queued (not yet spoken)", body = SpeakAccepted),
-        (status = 400, description = "Blank or too long text, a malformed character id, an out-of-range voice parameter, or malformed JSON", body = ApiError),
+        (status = 400, description = "Blank or too long text, a malformed character id, an out-of-range voice parameter, an `audioQuery` without `accent_phrases`, or malformed JSON", body = ApiError),
+        (status = 413, description = "Body larger than 1 MiB", body = ApiError),
         (status = 403, description = "`Host` is not a loopback name", body = ApiError),
         (status = 415, description = "Content type is not `application/json`", body = ApiError),
         (status = 422, description = "JSON does not match `SpeakRequest`", body = ApiError),
     )
 )]
 async fn speak(
-    State(sink): State<SpeakSink>,
+    State(state): State<ApiState>,
     client: Option<Extension<ConnectInfo<SocketAddr>>>,
     body: Result<Json<SpeakRequest>, JsonRejection>,
 ) -> Response {
@@ -174,13 +288,49 @@ async fn speak(
     match validate(req) {
         Ok(req) => {
             log_request(client.map(|Extension(ConnectInfo(addr))| addr), &req);
-            sink(req);
+            (state.speak)(req);
             let body = SpeakAccepted {
                 status: SpeakStatus::Queued,
             };
             (StatusCode::ACCEPTED, Json(body)).into_response()
         }
         Err(message) => error(StatusCode::BAD_REQUEST, message),
+    }
+}
+
+/// Make a VOICEVOX `audio_query` to edit.
+///
+/// Returns the engine's query for the text, unchanged. Edit it and send it
+/// back as `audioQuery` in `POST /speak`, so clients need not know the
+/// engine's URL.
+#[utoipa::path(
+    post,
+    path = "/audio_query",
+    request_body(content = AudioQueryRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "The engine's `audio_query`", content_type = "application/json"),
+        (status = 400, description = "Blank or too long text, a malformed character id, or malformed JSON", body = ApiError),
+        (status = 403, description = "`Host` is not a loopback name", body = ApiError),
+        (status = 404, description = "No character with that id", body = ApiError),
+        (status = 413, description = "Body larger than 1 MiB", body = ApiError),
+        (status = 415, description = "Content type is not `application/json`", body = ApiError),
+        (status = 422, description = "JSON does not match `AudioQueryRequest`", body = ApiError),
+        (status = 502, description = "The VOICEVOX engine is unreachable or failed", body = ApiError),
+    )
+)]
+async fn audio_query(State(state): State<ApiState>, body: Result<Json<AudioQueryRequest>, JsonRejection>) -> Response {
+    let Json(req) = match body {
+        Ok(body) => body,
+        Err(rejection) => return error(rejection.status(), rejection.body_text()),
+    };
+    let req = match validate_query_request(req) {
+        Ok(req) => req,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    match (state.audio_query)(req).await {
+        Ok(query) => Json(query).into_response(),
+        Err(QueryError::UnknownCharacter(id)) => error(StatusCode::NOT_FOUND, format!("unknown character \"{id}\"")),
+        Err(QueryError::Engine(message)) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
 
@@ -221,7 +371,7 @@ async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
         description = "Make the voxmate avatar speak. Listens on 127.0.0.1 only (port 50080 by default, configurable in the app). Every request needs a loopback `Host` header (`127.0.0.1`, `localhost` or `[::1]`). CORS preflights are never answered, so web pages on other origins cannot call it."
     ),
     servers((url = "http://127.0.0.1:50080", description = "Default port")),
-    paths(speak, health, openapi_json)
+    paths(speak, audio_query, health, openapi_json)
 )]
 pub struct ApiDoc;
 
@@ -245,13 +395,15 @@ async fn require_loopback_host(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-pub fn router(sink: SpeakSink) -> Router {
+pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/speak", post(speak))
+        .route("/audio_query", post(audio_query))
         .route("/health", get(health))
         .route("/openapi.json", get(openapi_json))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(require_loopback_host))
-        .with_state(sink)
+        .with_state(state)
 }
 
 /// Binds synchronously so a port conflict can be reported at startup.
@@ -262,9 +414,9 @@ pub fn bind(port: u16) -> std::io::Result<TcpListener> {
 }
 
 /// Must be called from inside a tokio runtime.
-pub async fn serve(listener: TcpListener, sink: SpeakSink) -> std::io::Result<()> {
+pub async fn serve(listener: TcpListener, state: ApiState) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::from_std(listener)?;
-    let app = router(sink).into_make_service_with_connect_info::<SocketAddr>();
+    let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     axum::serve(listener, app).await
 }
 
@@ -283,6 +435,143 @@ mod tests {
         let got2 = got.clone();
         let sink: SpeakSink = Arc::new(move |req: SpeakRequest| got2.lock().unwrap().push(req));
         (sink, got)
+    }
+
+    /// Echoes the text as `kana`; "down" fails like an unreachable engine.
+    fn fake_query_source() -> AudioQuerySource {
+        Arc::new(|req: AudioQueryRequest| {
+            Box::pin(async move {
+                if req.character.as_deref() == Some("nobody") {
+                    return Err(QueryError::UnknownCharacter("nobody".into()));
+                }
+                if req.text == "down" {
+                    return Err(QueryError::Engine("cannot reach VOICEVOX engine".into()));
+                }
+                Ok(json!({ "accent_phrases": [], "kana": req.text, "speaker": req.speaker }))
+            })
+        })
+    }
+
+    /// Shadows `super::router` so the tests only pass the speak sink.
+    fn router(sink: SpeakSink) -> Router {
+        super::router(ApiState {
+            speak: sink,
+            audio_query: fake_query_source(),
+        })
+    }
+
+    fn post_json(path: &str, body: &str) -> Request<Body> {
+        Request::post(path)
+            .header(header::HOST, "127.0.0.1:50080")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn speaks_an_audio_query_with_kana_as_text() {
+        let (sink, got) = capture();
+        let body = json!({ "audioQuery": { "accent_phrases": [], "kana": "コンニチワ'" }, "speaker": 1 });
+        let res = router(sink)
+            .oneshot(post_json("/speak", &body.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::ACCEPTED);
+        let got = got.lock().unwrap();
+        assert_eq!(got[0].text, "コンニチワ'");
+        assert_eq!(got[0].audio_query, Some(body["audioQuery"].clone()));
+    }
+
+    #[tokio::test]
+    async fn keeps_given_text_alongside_an_audio_query() {
+        let (sink, got) = capture();
+        let body = json!({ "text": "こんにちは", "audioQuery": { "accent_phrases": [], "kana": "コンニチワ'" } });
+        let res = router(sink)
+            .oneshot(post_json("/speak", &body.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::ACCEPTED);
+        assert_eq!(got.lock().unwrap()[0].text, "こんにちは");
+    }
+
+    #[tokio::test]
+    async fn rejects_an_audio_query_without_accent_phrases() {
+        let (sink, got) = capture();
+        for query in [json!({ "kana": "ア" }), json!([]), json!("x")] {
+            let body = json!({ "text": "a", "audioQuery": query });
+            let res = router(sink.clone())
+                .oneshot(post_json("/speak", &body.to_string()))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{query}");
+        }
+        // Neither text nor kana.
+        let body = json!({ "audioQuery": { "accent_phrases": [] } });
+        let res = router(sink)
+            .oneshot(post_json("/speak", &body.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert!(got.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_bodies_over_the_limit() {
+        let (sink, _) = capture();
+        let padding = "a".repeat(MAX_BODY_BYTES);
+        let body = json!({ "text": "a", "audioQuery": { "accent_phrases": [], "pad": padding } });
+        let res = router(sink)
+            .oneshot(post_json("/speak", &body.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn returns_an_audio_query() {
+        let (sink, _) = capture();
+        let res = router(sink)
+            .oneshot(post_json("/audio_query", r#"{"text":" こんにちは ","speaker":1}"#))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(res).await,
+            json!({ "accent_phrases": [], "kana": "こんにちは", "speaker": 1 })
+        );
+    }
+
+    #[tokio::test]
+    async fn audio_query_errors() {
+        let (sink, _) = capture();
+        let cases = [
+            (r#"{"text":" "}"#, StatusCode::BAD_REQUEST),
+            (r#"{"text":"a","character":"Bad"}"#, StatusCode::BAD_REQUEST),
+            (r#"{"text":"a","character":"nobody"}"#, StatusCode::NOT_FOUND),
+            (r#"{"text":"down"}"#, StatusCode::BAD_GATEWAY),
+            (r#"{"speaker":1}"#, StatusCode::UNPROCESSABLE_ENTITY),
+        ];
+        for (body, status) in cases {
+            let res = router(sink.clone())
+                .oneshot(post_json("/audio_query", body))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), status, "{body}");
+        }
+    }
+
+    #[test]
+    fn resolves_speakers_like_the_app() {
+        let characters = json!([{ "id": "a", "speaker": 1 }, { "id": "b", "speaker": 8 }]);
+        let c = Some(&characters);
+        assert_eq!(resolve_speaker(c, Some("a"), Some("b")), Ok(8));
+        assert_eq!(resolve_speaker(c, Some("b"), None), Ok(8));
+        assert_eq!(resolve_speaker(c, Some("gone"), None), Ok(1));
+        assert_eq!(
+            resolve_speaker(c, Some("a"), Some("nobody")),
+            Err(QueryError::UnknownCharacter("nobody".into()))
+        );
+        assert_eq!(resolve_speaker(None, None, None), Ok(DEFAULT_SPEAKER));
     }
 
     fn post_speak(body: &str, content_type: &str) -> Request<Body> {
@@ -321,6 +610,7 @@ mod tests {
                     pitch: Some(0.05),
                     ..Default::default()
                 }),
+                audio_query: None,
             }]
         );
     }
@@ -395,10 +685,17 @@ mod tests {
     async fn rejects_malformed_json() {
         let (sink, _) = capture();
         let res = router(sink.clone())
-            .oneshot(post_speak(r#"{"speaker":1}"#, "application/json"))
+            .oneshot(post_speak(r#"{"text":1}"#, "application/json"))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Without text or an audioQuery there is nothing to say.
+        let res = router(sink.clone())
+            .oneshot(post_speak(r#"{"speaker":1}"#, "application/json"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
         let res = router(sink)
             .oneshot(post_speak("{not json", "application/json"))
@@ -495,7 +792,13 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         assert!(addr.ip().is_loopback());
         let (sink, got) = capture();
-        tokio::spawn(serve(listener, sink));
+        tokio::spawn(serve(
+            listener,
+            ApiState {
+                speak: sink,
+                audio_query: fake_query_source(),
+            },
+        ));
 
         let res = reqwest::Client::new()
             .post(format!("http://{addr}/speak"))

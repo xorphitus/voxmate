@@ -1,4 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AudioQuery } from "../voice/timeline";
 import type { VoiceParams } from "../voice/params";
 import type { TextSource, LineSink } from "./TextSource";
 
@@ -8,6 +9,7 @@ interface SpeakRequest {
   character?: string;
   speaker?: number;
   voice?: VoiceParams;
+  audioQuery?: AudioQuery;
 }
 
 /** Lines posted to `POST /speak` on the local API (forwarded by Rust). */
@@ -17,7 +19,7 @@ export class LocalApiSource implements TextSource {
 
   async start(sink: LineSink): Promise<void> {
     this.unlisten = await listen<SpeakRequest>("speak-request", ({ payload }) => {
-      sink({ text: payload.text, character: payload.character, speaker: payload.speaker, voice: payload.voice, source: this.name });
+      sink({ ...payload, source: this.name });
     });
   }
 

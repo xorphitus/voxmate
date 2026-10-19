@@ -26,8 +26,14 @@ export function setVoicevoxUrl(url: string): Promise<void> {
   return invoke("set_voicevox_url", { url });
 }
 
-export async function synthesize(text: string, speaker: number, voice: VoiceParams = {}): Promise<Synthesis> {
-  const packed = await invoke<ArrayBuffer>("voicevox_synthesize", { text, speaker, voice });
+/** Synthesizes `query` when given (an edited `audio_query`), or a fresh query for `text`. */
+export async function synthesize(
+  text: string,
+  speaker: number,
+  voice: VoiceParams = {},
+  query?: AudioQuery,
+): Promise<Synthesis> {
+  const packed = await invoke<ArrayBuffer>("voicevox_synthesize", { text, speaker, voice, query: query ?? null });
   return unpack(packed);
 }
 

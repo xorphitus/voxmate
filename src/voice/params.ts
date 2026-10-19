@@ -61,3 +61,12 @@ export function mergeVoice(...layers: (VoiceParams | undefined)[]): VoiceParams 
   }
   return voice;
 }
+
+/**
+ * The voice to synthesize a line with. A line that brings its own
+ * `audio_query` keeps the query's values, so only the line's voice applies;
+ * otherwise the character's defaults come first.
+ */
+export function lineVoice(characterVoice: VoiceParams, line: { voice?: VoiceParams; audioQuery?: unknown }): VoiceParams {
+  return line.audioQuery ? mergeVoice(line.voice) : mergeVoice(characterVoice, line.voice);
+}

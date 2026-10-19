@@ -234,8 +234,19 @@ impl VoicevoxClient {
         Ok(self.send("/synthesis", req).await?.bytes().await?.to_vec())
     }
 
-    pub async fn synthesize(&self, text: &str, speaker: u32, voice: &VoiceParams) -> Result<Synthesis> {
-        let mut query = self.audio_query(text, speaker).await?;
+    /// Synthesizes `query` when given (an edited `audio_query`), or a fresh query
+    /// for `text`. `voice` is written over the query's own values first.
+    pub async fn synthesize(
+        &self,
+        text: &str,
+        speaker: u32,
+        voice: &VoiceParams,
+        query: Option<Value>,
+    ) -> Result<Synthesis> {
+        let mut query = match query {
+            Some(query) => query,
+            None => self.audio_query(text, speaker).await?,
+        };
         voice.apply(&mut query);
         let wav = self.synthesis(&query, speaker).await?;
         Ok(Synthesis { query, wav })
@@ -309,7 +320,7 @@ mod tests {
 
         let client = VoicevoxClient::new(&format!("{}/", server.uri())).unwrap();
         let out = client
-            .synthesize("こんにちは", 3, &VoiceParams::default())
+            .synthesize("こんにちは", 3, &VoiceParams::default(), None)
             .await
             .unwrap();
         assert_eq!(out.query, sample_query());
@@ -343,9 +354,66 @@ mod tests {
             pre_phoneme_length: Some(0.0),
             ..Default::default()
         };
-        let out = client.synthesize("x", 3, &voice).await.unwrap();
+        let out = client.synthesize("x", 3, &voice, None).await.unwrap();
         // The returned query is what was synthesized, so lip sync follows it.
         assert_eq!(out.query, expected);
+    }
+
+    #[tokio::test]
+    async fn synthesizes_a_given_query_without_asking_for_one() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/audio_query"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_query()))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let mut edited = sample_query();
+        edited["speedScale"] = json!(0.9);
+        let mut expected = edited.clone();
+        expected["pitchScale"] = json!(0.1);
+        Mock::given(method("POST"))
+            .and(path("/synthesis"))
+            .and(body_json(&expected))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"RIFFfake".to_vec()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = VoicevoxClient::new(&server.uri()).unwrap();
+        let voice = VoiceParams {
+            pitch: Some(0.1),
+            ..Default::default()
+        };
+        let out = client.synthesize("", 3, &voice, Some(edited)).await.unwrap();
+        assert_eq!(out.query, expected);
+    }
+
+    #[tokio::test]
+    async fn reports_a_rejected_query() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/synthesis"))
+            .respond_with(ResponseTemplate::new(422).set_body_string("accent_phrases: field required"))
+            .mount(&server)
+            .await;
+
+        let client = VoicevoxClient::new(&server.uri()).unwrap();
+        let err = client
+            .synthesize("", 3, &VoiceParams::default(), Some(json!({})))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Status {
+                    endpoint: "/synthesis",
+                    status: 422,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]
@@ -383,7 +451,10 @@ mod tests {
             .await;
 
         let client = VoicevoxClient::new(&server.uri()).unwrap();
-        let err = client.synthesize("x", 9999, &VoiceParams::default()).await.unwrap_err();
+        let err = client
+            .synthesize("x", 9999, &VoiceParams::default(), None)
+            .await
+            .unwrap_err();
         match err {
             Error::Status { endpoint, status, .. } => {
                 assert_eq!(endpoint, "/audio_query");
