@@ -186,6 +186,9 @@ options.
   or play all; the line being spoken is highlighted. Scenes are saved as the
   `POST /scenes` JSON, so a saved file can be posted from a script as is.
   **Export WAV…** (or ⤓ on a line) synthesizes the scene into one WAV file.
+  **Open…** also imports the talk track of a VOICEVOX project (`.vvproj`):
+  each item becomes a line with its edited query, and its voice maps to the
+  character with that speaker (or stays as the line's `speaker`).
 - **Always on top** takes effect immediately.
 - **Transparent background** needs a restart. On macOS it uses the private
   API (`macOSPrivateApi`). On Linux it only works under a compositing window manager.

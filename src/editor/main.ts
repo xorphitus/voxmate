@@ -9,6 +9,7 @@ import { type Character, sanitizeCharacters } from "../characters";
 import { SETTINGS_FILE } from "../config";
 import { followTheme, type ThemePreference } from "../ui/theme";
 import { inRange, VOICE_RANGES, type VoiceField } from "../voice/params";
+import { importVvproj } from "./vvproj";
 import { EDITOR_PLAY, EDITOR_STOP, type EditorPlay, STAGE_LINE, type StageLine } from "./bridge";
 import {
   blankLine,
@@ -260,11 +261,20 @@ async function main() {
     render();
   });
   $("open").addEventListener("click", async () => {
-    const path = await open({ multiple: false, directory: false, filters: [{ name: "Scene", extensions: ["json"] }] });
+    const path = await open({
+      multiple: false,
+      directory: false,
+      filters: [
+        { name: "Scene or VOICEVOX project", extensions: ["json", "vvproj"] },
+        { name: "Scene", extensions: ["json"] },
+        { name: "VOICEVOX project (talk track)", extensions: ["vvproj"] },
+      ],
+    });
     if (!path) return;
     try {
       const json: unknown = JSON.parse(await invoke<string>("read_scene_file", { path }));
-      lines = fromSceneFile(json, defaultCharacter);
+      // A VOICEVOX project is imported; save it as a scene to keep it.
+      lines = path.endsWith(".vvproj") ? importVvproj(json, characters, defaultCharacter) : fromSceneFile(json, defaultCharacter);
       render();
       info(`Opened ${path.split("/").pop()}`);
     } catch (e) {

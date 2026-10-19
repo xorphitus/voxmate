@@ -153,6 +153,8 @@ fn llm_cancel_all(tasks: State<'_, LlmTasks>) {
 
 /// Scene files are the scene API's JSON; anything bigger is not one.
 const MAX_SCENE_FILE_BYTES: u64 = api::MAX_BODY_BYTES as u64;
+/// VOICEVOX projects to import.
+const MAX_PROJECT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Opens the scene editor in its own window, so the stage window can stay
 /// small and transparent. Focuses it if it is already open.
@@ -170,20 +172,26 @@ fn open_editor(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-fn scene_file_path(path: &str) -> Result<PathBuf, String> {
+fn scene_file_path(path: &str, extensions: &[&str]) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
-    if path.extension().and_then(|e| e.to_str()) != Some("json") {
-        return Err("scene files must be .json".into());
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) if extensions.contains(&ext) => Ok(path),
+        _ => Err(format!("scene files must be .{}", extensions.join(" or ."))),
     }
-    Ok(path)
 }
 
-/// Reads a scene file the user picked in the open dialog.
+/// Reads a scene file (or a VOICEVOX project to import) the user picked in the open dialog.
 #[tauri::command]
 fn read_scene_file(path: String) -> Result<String, String> {
-    let path = scene_file_path(&path)?;
+    let path = scene_file_path(&path, &["json", "vvproj"])?;
     let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
-    if size > MAX_SCENE_FILE_BYTES {
+    // Projects carry edited queries and song tracks, so they get more room.
+    let limit = if path.extension().is_some_and(|e| e == "vvproj") {
+        MAX_PROJECT_FILE_BYTES
+    } else {
+        MAX_SCENE_FILE_BYTES
+    };
+    if size > limit {
         return Err(format!("{} is too large for a scene file", path.display()));
     }
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
@@ -192,7 +200,7 @@ fn read_scene_file(path: String) -> Result<String, String> {
 /// Writes a scene file to the path the user picked in the save dialog.
 #[tauri::command]
 fn write_scene_file(path: String, contents: String) -> Result<(), String> {
-    let path = scene_file_path(&path)?;
+    let path = scene_file_path(&path, &["json"])?;
     if contents.len() as u64 > MAX_SCENE_FILE_BYTES {
         return Err("the scene is too large to save".into());
     }
