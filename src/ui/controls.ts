@@ -1,16 +1,28 @@
+import type { Character } from "../characters";
 import type { Settings } from "../config";
 import type { TextSource, UtteranceSink } from "../speech/TextSource";
 import type { Speaker } from "../voice/voicevox";
 import type { ThemePreference } from "./theme";
 
+/** Settings edited as plain fields; characters have their own handlers. */
+export type SimpleSetting = Exclude<keyof Settings, "characters" | "defaultCharacter">;
+
 export interface ControlHandlers {
   stop(): void;
   /** Send the text to the LLM; its reply is spoken. */
   ask(text: string): void;
+  /** Pick a model file for the character on stage. */
   loadModel(): void;
   refreshSpeakers(): void;
   /** Called after the user edits a setting; the handler persists/applies it. */
-  change<K extends keyof Settings>(key: K, value: Settings[K]): void;
+  change<K extends SimpleSetting>(key: K, value: Settings[K]): void;
+  /** Put another character on stage. */
+  selectCharacter(id: string): void;
+  /** Add a character, copying the one on stage if `duplicate`, and put it on stage. */
+  addCharacter(duplicate: boolean): void;
+  removeCharacter(): void;
+  /** Edit the character on stage. */
+  editCharacter(patch: Partial<Character>): void;
 }
 
 function $<T extends HTMLElement>(id: string): T {
@@ -28,7 +40,14 @@ export class Controls implements TextSource {
   private readonly text = $<HTMLTextAreaElement>("text");
   private readonly status = $<HTMLParagraphElement>("status");
   private readonly queueInfo = $<HTMLSpanElement>("queue-info");
+  private readonly character = $<HTMLSelectElement>("character");
   private readonly speaker = $<HTMLSelectElement>("speaker");
+  private readonly characterName = $<HTMLInputElement>("character-name");
+  private readonly characterId = $<HTMLInputElement>("character-id");
+  private readonly characterModel = $<HTMLElement>("character-model");
+  private readonly characterPersona = $<HTMLTextAreaElement>("character-persona");
+  private readonly characterLlmModel = $<HTMLInputElement>("character-llm-model");
+  private readonly characterRemove = $<HTMLButtonElement>("character-remove");
   private readonly voicevoxUrl = $<HTMLInputElement>("voicevox-url");
   private readonly volume = $<HTMLInputElement>("volume");
   private readonly alwaysOnTop = $<HTMLInputElement>("always-on-top");
@@ -36,7 +55,6 @@ export class Controls implements TextSource {
   private readonly theme = $<HTMLSelectElement>("theme");
   private readonly llmUrl = $<HTMLInputElement>("llm-url");
   private readonly llmModel = $<HTMLInputElement>("llm-model");
-  private readonly llmSystemPrompt = $<HTMLTextAreaElement>("llm-system-prompt");
   private readonly llmHistory = $<HTMLInputElement>("llm-history");
   private readonly apiEnabled = $<HTMLInputElement>("api-enabled");
   private readonly apiPort = $<HTMLInputElement>("api-port");
@@ -45,8 +63,12 @@ export class Controls implements TextSource {
   private readonly placeholderTitle = $<HTMLParagraphElement>("placeholder-title");
   private readonly placeholderHint = $<HTMLParagraphElement>("placeholder-hint");
   private readonly placeholderLoad = $<HTMLButtonElement>("placeholder-load");
+  private speakers: Speaker[] = [];
+  /** The character on stage, shown in the editor. */
+  private current!: Character;
 
   constructor(settings: Settings, handlers: ControlHandlers) {
+    this.setCharacters(settings.characters, settings.defaultCharacter);
     this.voicevoxUrl.value = settings.voicevoxUrl;
     this.volume.value = String(settings.volume);
     this.alwaysOnTop.checked = settings.alwaysOnTop;
@@ -54,7 +76,6 @@ export class Controls implements TextSource {
     this.theme.value = settings.theme;
     this.llmUrl.value = settings.llmUrl;
     this.llmModel.value = settings.llmModel;
-    this.llmSystemPrompt.value = settings.llmSystemPrompt;
     this.llmHistory.value = String(settings.llmHistory);
     this.apiEnabled.checked = settings.apiEnabled;
     this.apiPort.value = String(settings.apiPort);
@@ -81,7 +102,23 @@ export class Controls implements TextSource {
     this.placeholderLoad.addEventListener("click", () => handlers.loadModel());
     $("refresh-speakers").addEventListener("click", () => handlers.refreshSpeakers());
 
-    this.speaker.addEventListener("change", () => handlers.change("speaker", Number(this.speaker.value)));
+    this.character.addEventListener("change", () => handlers.selectCharacter(this.character.value));
+    this.speaker.addEventListener("change", () => handlers.editCharacter({ speaker: Number(this.speaker.value) }));
+    $("character-add").addEventListener("click", () => handlers.addCharacter(false));
+    $("character-duplicate").addEventListener("click", () => handlers.addCharacter(true));
+    this.characterRemove.addEventListener("click", () => handlers.removeCharacter());
+    this.characterName.addEventListener("change", () => {
+      const name = this.characterName.value.trim();
+      if (name) handlers.editCharacter({ name });
+      else this.characterName.value = this.current.name;
+    });
+    this.characterId.addEventListener("change", () => handlers.editCharacter({ id: this.characterId.value.trim() }));
+    this.characterPersona.addEventListener("change", () =>
+      handlers.editCharacter({ persona: this.characterPersona.value }),
+    );
+    this.characterLlmModel.addEventListener("change", () =>
+      handlers.editCharacter({ llmModel: this.characterLlmModel.value.trim() }),
+    );
     $("voicevox-apply").addEventListener("click", () =>
       handlers.change("voicevoxUrl", this.voicevoxUrl.value.trim()),
     );
@@ -91,9 +128,6 @@ export class Controls implements TextSource {
     this.theme.addEventListener("change", () => handlers.change("theme", this.theme.value as ThemePreference));
     this.llmUrl.addEventListener("change", () => handlers.change("llmUrl", this.llmUrl.value.trim()));
     this.llmModel.addEventListener("change", () => handlers.change("llmModel", this.llmModel.value.trim()));
-    this.llmSystemPrompt.addEventListener("change", () =>
-      handlers.change("llmSystemPrompt", this.llmSystemPrompt.value),
-    );
     this.llmHistory.addEventListener("change", () => {
       const count = Number(this.llmHistory.value);
       if (Number.isInteger(count) && count >= 0 && count <= 200) handlers.change("llmHistory", count);
@@ -135,12 +169,33 @@ export class Controls implements TextSource {
     this.text.value = "";
   }
 
-  setSpeakers(speakers: Speaker[], selected: number): void {
+  setSpeakers(speakers: Speaker[]): void {
+    this.speakers = speakers;
+    this.renderSpeakers();
+  }
+
+  private renderSpeakers(): void {
+    const selected = this.current.speaker;
     this.speaker.replaceChildren(
-      ...speakers.flatMap((s) =>
+      ...this.speakers.flatMap((s) =>
         s.styles.map((style) => new Option(`${s.name}（${style.name}）`, String(style.id), false, style.id === selected)),
       ),
     );
+  }
+
+  /** Shows the character list, with `currentId` on stage and in the editor. */
+  setCharacters(characters: Character[], currentId: string): void {
+    this.current = characters.find((c) => c.id === currentId) ?? characters[0];
+    this.character.replaceChildren(
+      ...characters.map((c) => new Option(c.name, c.id, false, c === this.current)),
+    );
+    this.characterRemove.disabled = characters.length < 2;
+    this.characterName.value = this.current.name;
+    this.characterId.value = this.current.id;
+    this.characterModel.textContent = this.current.modelPath?.split("/").pop() ?? "none (Load model…)";
+    this.characterPersona.value = this.current.persona;
+    this.characterLlmModel.value = this.current.llmModel;
+    this.renderSpeakers();
   }
 
   setQueueState(speaking: string | null, pending: number): void {

@@ -81,7 +81,10 @@ curl -X POST localhost:50080/speak \
   -d '{"text":"こんにちは"}'
 # => 202 {"status":"queued"}
 
-# Optional: override the VOICEVOX style id for this utterance
+# Optional: pick a character (its id from Settings), or override the VOICEVOX
+# style id for this utterance
+curl -X POST localhost:50080/speak -H 'content-type: application/json' \
+  -d '{"text":"やっほー","character":"default"}'
 curl -X POST localhost:50080/speak -H 'content-type: application/json' \
   -d '{"text":"やっほー","speaker":1}'
 
@@ -105,9 +108,15 @@ The API rejects requests unless:
 ## Settings
 
 voxmate saves settings with `tauri-plugin-store` (`settings.json` in the app
-data directory): VOICEVOX URL, speaker, model path, volume, and the API and
-window options.
+data directory): characters, VOICEVOX URL, volume, and the API, LLM and window
+options.
 
+- **Characters** bundle a model, a VOICEVOX speaker, a persona (the LLM system
+  prompt) and an optional LLM model. The one picked next to the speaker list is
+  on stage: it speaks lines that name no character, and the speaker list, Load
+  model… and the Character settings edit it. Its id is what `character` in
+  `POST /speak` refers to. Settings from before characters existed (model,
+  speaker, system prompt) become the `default` character on first start.
 - **Always on top** takes effect immediately.
 - **Transparent background** needs a restart. On macOS it uses the private
   API (`macOSPrivateApi`). On Linux it only works under a compositing window manager.
@@ -131,6 +140,7 @@ src/
   speech/                  TextSource interface, LocalApiSource, SpeechQueue
   ui/controls.ts           control panel (also the "ui" TextSource)
   config.ts                persisted settings
+  characters.ts            Character type, migration, id rules
 src-tauri/src/
   voicevox.rs              reqwest client: /speakers, /audio_query, /synthesis
   api.rs                   axum server: POST /speak, GET /health, GET /openapi.json

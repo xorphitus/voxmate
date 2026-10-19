@@ -97,3 +97,14 @@ describe("LlmSource", () => {
     expect(onError).toHaveBeenCalledWith(new Error("boom"));
   });
 });
+
+describe("LlmSource character", () => {
+  it("tags each sentence with the character who answers", async () => {
+    const { provider } = fakeProvider([["はい。"]]);
+    const source = new LlmSource(provider, () => ({ systemPrompt: "", history: 0, character: "zunda" }), vi.fn());
+    const said: Utterance[] = [];
+    source.start((u) => said.push(u));
+    await source.ask("やあ");
+    expect(said).toEqual([{ text: "はい。", character: "zunda", source: "llm" }]);
+  });
+});

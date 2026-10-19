@@ -1,4 +1,5 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
+import { type Character, migrateCharacter, sanitizeCharacters } from "./characters";
 import type { ThemePreference } from "./ui/theme";
 
 /**
@@ -8,9 +9,10 @@ import type { ThemePreference } from "./ui/theme";
  */
 export interface Settings {
   voicevoxUrl: string;
-  /** VOICEVOX style id. */
-  speaker: number;
-  modelPath: string | null;
+  /** Never empty; Config.open migrates the old single-character keys. */
+  characters: Character[];
+  /** Id of the character on stage, used by lines that name none. */
+  defaultCharacter: string;
   volume: number;
   apiEnabled: boolean;
   apiPort: number;
@@ -19,16 +21,16 @@ export interface Settings {
   theme: ThemePreference;
   /** OpenAI-compatible server root (no `/v1`), e.g. llama-swap. */
   llmUrl: string;
+  /** Used unless the character overrides it. */
   llmModel: string;
-  llmSystemPrompt: string;
   /** Past messages sent with each question. */
   llmHistory: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   voicevoxUrl: "http://127.0.0.1:50021",
-  speaker: 3, // ずんだもん (ノーマル) in the default engine
-  modelPath: null,
+  characters: [],
+  defaultCharacter: "default",
   volume: 1,
   apiEnabled: true,
   apiPort: 50080,
@@ -37,7 +39,6 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
   llmUrl: "http://127.0.0.1:8080", // llama-swap's default listen address
   llmModel: "",
-  llmSystemPrompt: "あなたはデスクトップのキャラクターです。読み上げられるので、記号や絵文字を使わず、話し言葉で短く答えてください。",
   llmHistory: 20,
 };
 
@@ -56,7 +57,31 @@ export class Config {
       const stored = await store.get(key);
       if (stored !== undefined && stored !== null) (values as Record<string, unknown>)[key] = stored;
     }
-    return new Config(store, values);
+    const config = new Config(store, values);
+    await config.ensureCharacters();
+    return config;
+  }
+
+  /**
+   * Before characters existed, `modelPath`, `speaker` and `llmSystemPrompt`
+   * were top-level keys. They become the default character on first run and
+   * are left in the store, so the previous release still finds them.
+   */
+  private async ensureCharacters(): Promise<void> {
+    let characters = sanitizeCharacters(this.values.characters);
+    if (characters.length === 0) {
+      characters = [
+        migrateCharacter({
+          modelPath: await this.store.get("modelPath"),
+          speaker: await this.store.get("speaker"),
+          llmSystemPrompt: await this.store.get("llmSystemPrompt"),
+        }),
+      ];
+    }
+    await this.set("characters", characters);
+    if (!characters.some((c) => c.id === this.values.defaultCharacter)) {
+      await this.set("defaultCharacter", characters[0].id);
+    }
   }
 
   all(): Settings {

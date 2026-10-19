@@ -30,6 +30,7 @@
       </form>
 
       <div class="row">
+        <select id="character" aria-label="Character on stage"></select>
         <select id="speaker" aria-label="Speaker"></select>
         <button type="button" id="refresh-speakers" title="Reload speakers">↻</button>
         <button type="button" id="load-model">Load model…</button>
@@ -60,14 +61,33 @@
             <label><input id="transparent" type="checkbox" /> Transparent background <small>(restart)</small></label>
           </div>
 
+          <span>Character</span>
+          <div class="row">
+            <button type="button" id="character-add">Add</button>
+            <button type="button" id="character-duplicate">Duplicate</button>
+            <button type="button" id="character-remove">Remove</button>
+          </div>
+
+          <label for="character-name">Name</label>
+          <input id="character-name" type="text" />
+
+          <label for="character-id">Id</label>
+          <div><input id="character-id" type="text" spellcheck="false" /> <small>used by the API</small></div>
+
+          <span>Model</span>
+          <small id="character-model"></small>
+
+          <label for="character-persona">Persona</label>
+          <textarea id="character-persona" rows="3" placeholder="System prompt for the LLM"></textarea>
+
+          <label for="character-llm-model">LLM model</label>
+          <input id="character-llm-model" type="text" spellcheck="false" placeholder="same as below" />
+
           <label for="llm-url">LLM URL</label>
           <input id="llm-url" type="url" spellcheck="false" placeholder="http://127.0.0.1:8080" />
 
-          <label for="llm-model">LLM model</label>
+          <label for="llm-model">Default LLM model</label>
           <input id="llm-model" type="text" spellcheck="false" placeholder="as named in llama-swap" />
-
-          <label for="llm-system-prompt">System prompt</label>
-          <textarea id="llm-system-prompt" rows="3"></textarea>
 
           <label for="llm-history">History</label>
           <div><input id="llm-history" type="number" min="0" max="200" /> <small>messages</small></div>

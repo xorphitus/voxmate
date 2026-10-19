@@ -101,7 +101,7 @@
             }
           },
           "400": {
-            "description": "Blank or too long text, or malformed JSON",
+            "description": "Blank or too long text, a malformed character id, or malformed JSON",
             "content": {
               "application/json": {
                 "schema": {
@@ -206,13 +206,22 @@
             "maxLength": 2000,
             "minLength": 1
           },
+          "character": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Id of the character who speaks, as shown in the app's character\nsettings. Omit it to use the character on stage. An id the app doesn't\nknow is accepted here and reported as an error in the app.",
+            "example": "default",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          },
           "speaker": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int32",
-            "description": "VOICEVOX style id (`GET /speakers` on the engine). Omit it to use the\nspeaker selected in the app.",
+            "description": "VOICEVOX style id (`GET /speakers` on the engine). Overrides the\ncharacter's voice. Omit it to use the character's speaker.",
             "example": 3,
             "minimum": 0
           }

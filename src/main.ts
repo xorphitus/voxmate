@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Avatar } from "./avatar/Avatar";
 import { assetUrl, createAvatar } from "./avatar/factory";
+import { type Character, idError, newCharacter, resolveCharacter } from "./characters";
 import { Config, type Settings } from "./config";
 import { LipSyncDriver } from "./lipsync/LipSyncDriver";
 import { OpenAiCompatibleProvider } from "./llm/LlmProvider";
@@ -11,7 +12,7 @@ import { LlmSource } from "./llm/LlmSource";
 import { LocalApiSource } from "./speech/LocalApiSource";
 import { SpeechQueue } from "./speech/SpeechQueue";
 import type { TextSource } from "./speech/TextSource";
-import { Controls } from "./ui/controls";
+import { Controls, type SimpleSetting } from "./ui/controls";
 import { followTheme } from "./ui/theme";
 import { AudioPlayer } from "./voice/player";
 import { buildTimeline, type Segment } from "./voice/timeline";
@@ -39,10 +40,17 @@ async function main() {
   player.setVolume(config.get("volume"));
   const driver = new LipSyncDriver(player);
   let avatar: Avatar | null = null;
+  /** Bumped per model change, so a slow load can't replace a newer one. */
+  let modelGeneration = 0;
+
+  const characters = () => config.get("characters");
+  /** The character on stage. */
+  const onStage = () => resolveCharacter(characters(), config.get("defaultCharacter"));
 
   const queue = new SpeechQueue<Prepared>({
     async prepare(u) {
-      const { query, wav } = await synthesize(u.text, u.speaker ?? config.get("speaker"));
+      const speaker = u.speaker ?? resolveCharacter(characters(), config.get("defaultCharacter"), u.character).speaker;
+      const { query, wav } = await synthesize(u.text, speaker);
       return { buffer: await player.decode(wav), timeline: buildTimeline(query) };
     },
     async play(p) {
@@ -64,14 +72,16 @@ async function main() {
   async function refreshSpeakers() {
     try {
       const speakers = await fetchSpeakers();
-      controls.setSpeakers(speakers, config.get("speaker"));
+      controls.setSpeakers(speakers);
       controls.info(`Connected to VOICEVOX at ${config.get("voicevoxUrl")}`);
     } catch (e) {
       controls.error(`VOICEVOX: ${errorText(e)}`);
     }
   }
 
-  async function loadModel(path: string) {
+  /** Resolves false if a newer model change superseded this one; the avatar is then left alone. */
+  async function loadModel(path: string): Promise<boolean> {
+    const generation = ++modelGeneration;
     const file = path.split("/").pop();
     controls.info(`Loading ${file}…`);
     if (!avatar) controls.setModelState("loading", file);
@@ -82,13 +92,42 @@ async function main() {
       await next.load(assetUrl(convertFileSrc(""), path));
     } catch (e) {
       next?.dispose();
+      if (generation !== modelGeneration) return false;
       controls.setModelState(avatar ? "loaded" : "empty");
       throw e;
+    }
+    if (generation !== modelGeneration) {
+      next.dispose();
+      return false;
     }
     avatar?.dispose();
     avatar = next;
     controls.setModelState("loaded");
     controls.info(`Loaded ${file}`);
+    return true;
+  }
+
+  function clearModel() {
+    modelGeneration++;
+    avatar?.dispose();
+    avatar = null;
+    controls.setModelState("empty");
+  }
+
+  /** Puts the on-stage character's model on stage. */
+  async function showCharacter() {
+    const { name, modelPath } = onStage();
+    if (!modelPath) {
+      clearModel();
+      return;
+    }
+    try {
+      await loadModel(modelPath);
+    } catch (e) {
+      // Don't leave the previous character's model standing in for this one.
+      clearModel();
+      controls.error(`Could not load the model of ${name}: ${errorText(e)}`);
+    }
   }
 
   async function pickModel() {
@@ -102,15 +141,85 @@ async function main() {
       ],
     });
     if (!path) return;
+    const id = onStage().id;
     try {
-      await loadModel(path);
-      await config.set("modelPath", path);
+      if (!(await loadModel(path))) return;
+      await saveCharacters(characters().map((c) => (c.id === id ? { ...c, modelPath: path } : c)));
     } catch (e) {
       controls.error(errorText(e));
     }
   }
 
-  async function change<K extends keyof Settings>(key: K, value: Settings[K]) {
+  async function saveCharacters(list: Character[], current = config.get("defaultCharacter")) {
+    await config.set("characters", list);
+    await config.set("defaultCharacter", current);
+    controls.setCharacters(list, current);
+  }
+
+  async function selectCharacter(id: string) {
+    if (id === config.get("defaultCharacter")) return;
+    try {
+      await saveCharacters(characters(), id);
+    } catch (e) {
+      controls.error(errorText(e));
+      return;
+    }
+    await showCharacter();
+  }
+
+  async function addCharacter(duplicate: boolean) {
+    const list = characters();
+    const added = newCharacter(list, duplicate ? onStage() : undefined);
+    try {
+      await saveCharacters([...list, added], added.id);
+    } catch (e) {
+      controls.error(errorText(e));
+      return;
+    }
+    controls.info(`Added ${added.name}`);
+    // A duplicate keeps the same model, which is already on stage.
+    if (!duplicate) await showCharacter();
+  }
+
+  async function removeCharacter() {
+    const list = characters();
+    const removed = onStage();
+    if (list.length < 2) return;
+    if (!window.confirm(`Remove ${removed.name}?`)) return;
+    const rest = list.filter((c) => c !== removed);
+    try {
+      await saveCharacters(rest, rest[0].id);
+    } catch (e) {
+      controls.error(errorText(e));
+      return;
+    }
+    controls.info(`Removed ${removed.name}`);
+    await showCharacter();
+  }
+
+  async function editCharacter(patch: Partial<Character>) {
+    const list = characters();
+    const current = onStage();
+    if (patch.id !== undefined && patch.id !== current.id) {
+      const problem = idError(patch.id, list, current);
+      if (problem) {
+        controls.error(problem);
+        controls.setCharacters(list, current.id);
+        return;
+      }
+    }
+    const edited = { ...current, ...patch };
+    try {
+      await saveCharacters(
+        list.map((c) => (c === current ? edited : c)),
+        edited.id,
+      );
+    } catch (e) {
+      controls.error(errorText(e));
+    }
+  }
+
+  async function change<K extends SimpleSetting>(key: K, value: Settings[K]) {
     try {
       switch (key) {
         case "voicevoxUrl":
@@ -140,20 +249,22 @@ async function main() {
     }
   }
 
+  const llmModel = () => onStage().llmModel || config.get("llmModel");
+
   const llm = new LlmSource(
-    new OpenAiCompatibleProvider(() => ({ url: config.get("llmUrl"), model: config.get("llmModel") })),
-    () => ({ systemPrompt: config.get("llmSystemPrompt"), history: config.get("llmHistory") }),
+    new OpenAiCompatibleProvider(() => ({ url: config.get("llmUrl"), model: llmModel() })),
+    () => ({ systemPrompt: onStage().persona, history: config.get("llmHistory"), character: onStage().id }),
     (e) => controls.error(`LLM: ${errorText(e)}`),
   );
 
   function ask(text: string) {
-    if (!config.get("llmModel")) {
+    if (!llmModel()) {
       controls.error("Set an LLM model in Settings first.");
       return;
     }
     // A new question replaces whatever is still being said.
     queue.clear();
-    controls.info(`Asking ${config.get("llmModel")}…`);
+    controls.info(`Asking ${llmModel()}…`);
     void llm.ask(text);
   }
 
@@ -166,6 +277,10 @@ async function main() {
     loadModel: () => void pickModel(),
     refreshSpeakers: () => void refreshSpeakers(),
     change: (key, value) => void change(key, value),
+    selectCharacter: (id) => void selectCharacter(id),
+    addCharacter: (duplicate) => void addCharacter(duplicate),
+    removeCharacter: () => void removeCharacter(),
+    editCharacter: (patch) => void editCharacter(patch),
   });
 
   // Autoplay policies: resume audio on the first gesture. Playback also calls
@@ -187,10 +302,7 @@ async function main() {
   );
 
   void refreshSpeakers();
-  const modelPath = config.get("modelPath");
-  if (modelPath) {
-    loadModel(modelPath).catch((e) => controls.error(`Could not load saved model: ${errorText(e)}`));
-  }
+  void showCharacter();
 
   new ResizeObserver(() => avatar?.resize()).observe(stage);
 

@@ -34,11 +34,27 @@ pub struct SpeakRequest {
     /// trimmed text must be 1 to 2000 characters (Unicode scalar values).
     #[schema(example = "こんにちは", min_length = 1, max_length = 2000)]
     pub text: String,
-    /// VOICEVOX style id (`GET /speakers` on the engine). Omit it to use the
-    /// speaker selected in the app.
+    /// Id of the character who speaks, as shown in the app's character
+    /// settings. Omit it to use the character on stage. An id the app doesn't
+    /// know is accepted here and reported as an error in the app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "default", pattern = "^[a-z0-9][a-z0-9_-]{0,63}$")]
+    pub character: Option<String>,
+    /// VOICEVOX style id (`GET /speakers` on the engine). Overrides the
+    /// character's voice. Omit it to use the character's speaker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = 3)]
     pub speaker: Option<u32>,
+}
+
+/// Mirrors the id rule in src/characters.ts.
+fn is_character_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    (1..=64).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -89,8 +105,17 @@ pub fn validate(req: SpeakRequest) -> Result<SpeakRequest, String> {
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(format!("text is longer than {MAX_TEXT_CHARS} characters"));
     }
+    if let Some(id) = &req.character {
+        if !is_character_id(id) {
+            return Err(
+                "character must be 1-64 characters of a-z, 0-9, - and _, starting with a letter or digit"
+                    .into(),
+            );
+        }
+    }
     Ok(SpeakRequest {
         text: text.to_string(),
+        character: req.character,
         speaker: req.speaker,
     })
 }
@@ -106,9 +131,10 @@ fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
         .map_or(0.0, |d| d.as_secs_f64());
     let client = client.map_or_else(|| "unknown".to_string(), |addr| addr.to_string());
     eprintln!(
-        "[{now:.3}] POST /speak from {client}: {} chars, hash {:016x}, speaker {:?}",
+        "[{now:.3}] POST /speak from {client}: {} chars, hash {:016x}, character {:?}, speaker {:?}",
         req.text.chars().count(),
         hasher.finish(),
+        req.character,
         req.speaker,
     );
 }
@@ -123,7 +149,7 @@ fn log_request(client: Option<SocketAddr>, req: &SpeakRequest) {
     request_body(content = SpeakRequest, content_type = "application/json"),
     responses(
         (status = 202, description = "Queued (not yet spoken)", body = SpeakAccepted),
-        (status = 400, description = "Blank or too long text, or malformed JSON", body = ApiError),
+        (status = 400, description = "Blank or too long text, a malformed character id, or malformed JSON", body = ApiError),
         (status = 403, description = "`Host` is not a loopback name", body = ApiError),
         (status = 415, description = "Content type is not `application/json`", body = ApiError),
         (status = 422, description = "JSON does not match `SpeakRequest`", body = ApiError),
@@ -270,7 +296,7 @@ mod tests {
         let (sink, got) = capture();
         let res = router(sink)
             .oneshot(post_speak(
-                r#"{"text":"  こんにちは ","speaker":3}"#,
+                r#"{"text":"  こんにちは ","character":"zunda-1","speaker":3}"#,
                 "application/json",
             ))
             .await
@@ -281,20 +307,39 @@ mod tests {
             *got.lock().unwrap(),
             vec![SpeakRequest {
                 text: "こんにちは".into(),
+                character: Some("zunda-1".into()),
                 speaker: Some(3)
             }]
         );
     }
 
     #[tokio::test]
-    async fn speaker_is_optional() {
+    async fn character_and_speaker_are_optional() {
         let (sink, got) = capture();
         let res = router(sink)
             .oneshot(post_speak(r#"{"text":"hi"}"#, "application/json"))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::ACCEPTED);
-        assert_eq!(got.lock().unwrap()[0].speaker, None);
+        let got = got.lock().unwrap();
+        assert_eq!(got[0].character, None);
+        assert_eq!(got[0].speaker, None);
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_character_id() {
+        for id in ["", "Zunda", "-a", "a b", &"a".repeat(65)] {
+            let (sink, got) = capture();
+            let res = router(sink)
+                .oneshot(post_speak(
+                    &json!({ "text": "hi", "character": id }).to_string(),
+                    "application/json",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{id:?}");
+            assert!(got.lock().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]

@@ -1,7 +1,9 @@
 /** One thing to say. */
 export interface Utterance {
   text: string;
-  /** VOICEVOX style id; falls back to the selected speaker. */
+  /** Character id; omitted means the character on stage. */
+  character?: string;
+  /** VOICEVOX style id; overrides the character's speaker. */
   speaker?: number;
   /** Name of the TextSource it came from, for logs/UI. */
   source?: string;

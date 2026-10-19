@@ -7,6 +7,8 @@ export interface LlmSourceOptions {
   systemPrompt: string;
   /** How many past messages (user + assistant) to send along; 0 forgets everything. */
   history: number;
+  /** Who speaks the reply; omitted means the character on stage. */
+  character?: string;
 }
 
 /**
@@ -45,7 +47,7 @@ export class LlmSource implements TextSource {
     const controller = new AbortController();
     this.controller = controller;
     const { signal } = controller;
-    const { systemPrompt, history } = this.options();
+    const { systemPrompt, history, character } = this.options();
     const messages: ChatMessage[] = [
       ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
       ...this.recent(history),
@@ -57,7 +59,7 @@ export class LlmSource implements TextSource {
     // Only the spoken part is kept, so reasoning does not fill the context.
     let reply = "";
     const say = (text: string) => {
-      if (!signal.aborted) this.sink?.({ text, source: this.name });
+      if (!signal.aborted) this.sink?.({ text, ...(character && { character }), source: this.name });
     };
     const feed = (text: string) => {
       reply += text;

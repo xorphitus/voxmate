@@ -4,6 +4,7 @@ import type { TextSource, UtteranceSink } from "./TextSource";
 /** Mirrors `SpeakRequest` in src-tauri/src/api.rs. */
 interface SpeakRequest {
   text: string;
+  character?: string;
   speaker?: number;
 }
 
@@ -14,7 +15,7 @@ export class LocalApiSource implements TextSource {
 
   async start(sink: UtteranceSink): Promise<void> {
     this.unlisten = await listen<SpeakRequest>("speak-request", ({ payload }) => {
-      sink({ text: payload.text, speaker: payload.speaker, source: this.name });
+      sink({ text: payload.text, character: payload.character, speaker: payload.speaker, source: this.name });
     });
   }
 
