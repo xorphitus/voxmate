@@ -147,9 +147,12 @@ options.
 
 - **Characters** bundle a model, a VOICEVOX speaker, a persona (the LLM system
   prompt), an optional LLM model and default voice parameters (empty = engine
-  default). The one picked next to the speaker list is
-  on stage: it speaks lines that name no character, and the speaker list, Load
-  model… and the Character settings edit it. Its id is what `character` in
+  default). The one picked next to the speaker list is the default: it speaks
+  lines that name no character, picking it brings it on stage, and the speaker
+  list, Load model… and the Character settings edit it. Several characters can
+  be on stage at once, side by side (VRM and Live2D mixed); **On stage** in the
+  Character settings takes one off. Only the speaker's mouth moves. Each
+  character on stage is a WebGL canvas, so keep it to a handful. Its id is what `character` in
   `POST /speak` refers to. Settings from before characters existed (model,
   speaker, system prompt) become the `default` character on first start.
 - **LLM mode** (next to the character picker): **Reply** lets the character

@@ -2,11 +2,10 @@ import "./styles.css";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Avatar } from "./avatar/Avatar";
 import { assetUrl, createAvatar } from "./avatar/factory";
+import { domSlots, type MemberState, StageView } from "./avatar/StageView";
 import { type Character, idError, newCharacter, resolveCharacter } from "./characters";
 import { Config, type Settings } from "./config";
-import { LipSyncDriver } from "./lipsync/LipSyncDriver";
 import { LlmAgent } from "./llm/LlmAgent";
 import { cancelAllGenerations, OpenAiCompatibleProvider } from "./llm/LlmProvider";
 import { LlmSource } from "./llm/LlmSource";
@@ -42,14 +41,53 @@ async function main() {
   const stage = document.getElementById("stage")!;
   const player = new AudioPlayer();
   player.setVolume(config.get("volume"));
-  const driver = new LipSyncDriver(player);
-  let avatar: Avatar | null = null;
-  /** Bumped per model change, so a slow load can't replace a newer one. */
-  let modelGeneration = 0;
 
   const characters = () => config.get("characters");
-  /** The character on stage. */
+  /** The default character: it speaks lines that name none, and the panel edits it. */
   const onStage = () => resolveCharacter(characters(), config.get("defaultCharacter"));
+
+  const stageView = new StageView({
+    clock: player,
+    createSlot: domSlots(stage),
+    async loadAvatar(path, container) {
+      const avatar = await createAvatar(path, container);
+      try {
+        await invoke("allow_model_file", { path });
+        await avatar.load(assetUrl(convertFileSrc(""), path));
+      } catch (e) {
+        avatar.dispose();
+        throw e;
+      }
+      return avatar;
+    },
+    onChange: (members) => showStageState(members),
+  });
+
+  /** Load errors already shown, so a later stage change doesn't repeat them. */
+  const shownErrors = new Set<string>();
+
+  /** The big placeholder (with its Load button) is for a stage of one without a model. */
+  function showStageState(members: MemberState[]) {
+    const loaded = members.some((m) => m.status === "loaded");
+    if (loaded || members.length > 1) controls.setModelState("loaded");
+    else if (members[0]?.status === "loading") controls.setModelState("loading", members[0].name);
+    else controls.setModelState("empty");
+    for (const m of members) {
+      const key = `${m.id}:${m.error}`;
+      if (m.status !== "error" || shownErrors.has(key)) continue;
+      shownErrors.add(key);
+      controls.error(`Could not load the model of ${m.name}: ${m.error}`);
+    }
+  }
+
+  /** Shows the characters in the `stage` setting. */
+  function syncStage() {
+    const byId = new Map(characters().map((c) => [c.id, c]));
+    const members = config
+      .get("stage")
+      .flatMap((id) => (byId.has(id) ? [{ id, name: byId.get(id)!.name, modelPath: byId.get(id)!.modelPath }] : []));
+    return stageView.sync(members);
+  }
 
   const stagePlayer = new StagePlayer<Prepared>({
     async prepare(line) {
@@ -59,15 +97,16 @@ async function main() {
       const { query, wav } = await synthesize(line.text, speaker, voice, line.audioQuery);
       return { buffer: await player.decode(wav), timeline: buildTimeline(query) };
     },
-    async play(p) {
+    async play(p, line) {
       if (!(await player.resume())) {
         throw new Error("audio is suspended. Click the window to enable sound, then send it again");
       }
-      driver.setTimeline(p.timeline);
+      // Only the speaker's mouth moves; the others listen.
+      stageView.speak(line.character, p.timeline);
       try {
         await player.play(p.buffer);
       } finally {
-        driver.clear();
+        stageView.silence();
       }
     },
     stop: () => player.stop(),
@@ -94,57 +133,6 @@ async function main() {
     }
   }
 
-  /** Resolves false if a newer model change superseded this one; the avatar is then left alone. */
-  async function loadModel(path: string): Promise<boolean> {
-    const generation = ++modelGeneration;
-    const file = path.split("/").pop();
-    controls.info(`Loading ${file}…`);
-    if (!avatar) controls.setModelState("loading", file);
-    let next: Avatar | null = null;
-    try {
-      next = await createAvatar(path, stage);
-      await invoke("allow_model_file", { path });
-      await next.load(assetUrl(convertFileSrc(""), path));
-    } catch (e) {
-      next?.dispose();
-      if (generation !== modelGeneration) return false;
-      controls.setModelState(avatar ? "loaded" : "empty");
-      throw e;
-    }
-    if (generation !== modelGeneration) {
-      next.dispose();
-      return false;
-    }
-    avatar?.dispose();
-    avatar = next;
-    controls.setModelState("loaded");
-    controls.info(`Loaded ${file}`);
-    return true;
-  }
-
-  function clearModel() {
-    modelGeneration++;
-    avatar?.dispose();
-    avatar = null;
-    controls.setModelState("empty");
-  }
-
-  /** Puts the on-stage character's model on stage. */
-  async function showCharacter() {
-    const { name, modelPath } = onStage();
-    if (!modelPath) {
-      clearModel();
-      return;
-    }
-    try {
-      await loadModel(modelPath);
-    } catch (e) {
-      // Don't leave the previous character's model standing in for this one.
-      clearModel();
-      controls.error(`Could not load the model of ${name}: ${errorText(e)}`);
-    }
-  }
-
   async function pickModel() {
     const path = await open({
       multiple: false,
@@ -158,17 +146,33 @@ async function main() {
     if (!path) return;
     const id = onStage().id;
     try {
-      if (!(await loadModel(path))) return;
       await saveCharacters(characters().map((c) => (c.id === id ? { ...c, modelPath: path } : c)));
     } catch (e) {
       controls.error(errorText(e));
+      return;
     }
+    controls.info(`Loading ${path.split("/").pop()}…`);
+    await syncStage();
+    if (stageView.state.find((m) => m.id === id)?.status === "loaded") controls.info(`Loaded ${path.split("/").pop()}`);
   }
 
-  async function saveCharacters(list: Character[], current = config.get("defaultCharacter")) {
+  /**
+   * Saves the characters, the default one and who is on stage (the default
+   * is always on stage), then updates the panel and the stage.
+   */
+  async function saveCharacters(
+    list: Character[],
+    current = config.get("defaultCharacter"),
+    stageIds = config.get("stage"),
+  ) {
+    const known = new Set(list.map((c) => c.id));
+    const members = stageIds.filter((id) => known.has(id));
+    if (!members.includes(current)) members.push(current);
     await config.set("characters", list);
     await config.set("defaultCharacter", current);
-    controls.setCharacters(list, current);
+    await config.set("stage", members);
+    controls.setCharacters(list, current, members);
+    void syncStage();
   }
 
   async function selectCharacter(id: string) {
@@ -177,9 +181,24 @@ async function main() {
       await saveCharacters(characters(), id);
     } catch (e) {
       controls.error(errorText(e));
-      return;
     }
-    await showCharacter();
+  }
+
+  async function setOnStage(on: boolean) {
+    const id = onStage().id;
+    const members = config.get("stage");
+    try {
+      if (on) {
+        await saveCharacters(characters(), id, [...members, id]);
+      } else {
+        const rest = members.filter((m) => m !== id);
+        // The default character must stay on stage, so another member takes over.
+        if (rest.length) await saveCharacters(characters(), rest[0], rest);
+        else controls.setCharacters(characters(), id, members);
+      }
+    } catch (e) {
+      controls.error(errorText(e));
+    }
   }
 
   async function addCharacter(duplicate: boolean) {
@@ -192,8 +211,6 @@ async function main() {
       return;
     }
     controls.info(`Added ${added.name}`);
-    // A duplicate keeps the same model, which is already on stage.
-    if (!duplicate) await showCharacter();
   }
 
   async function removeCharacter() {
@@ -202,14 +219,14 @@ async function main() {
     if (list.length < 2) return;
     if (!window.confirm(`Remove ${removed.name}?`)) return;
     const rest = list.filter((c) => c !== removed);
+    const members = config.get("stage").filter((id) => id !== removed.id);
     try {
-      await saveCharacters(rest, rest[0].id);
+      await saveCharacters(rest, members[0] ?? rest[0].id, members);
     } catch (e) {
       controls.error(errorText(e));
       return;
     }
     controls.info(`Removed ${removed.name}`);
-    await showCharacter();
   }
 
   async function editCharacter(patch: Partial<Character>) {
@@ -219,15 +236,18 @@ async function main() {
       const problem = idError(patch.id, list, current);
       if (problem) {
         controls.error(problem);
-        controls.setCharacters(list, current.id);
+        controls.setCharacters(list, current.id, config.get("stage"));
         return;
       }
     }
     const edited = { ...current, ...patch };
+    // A renamed id keeps its place on stage.
+    const members = config.get("stage").map((id) => (id === current.id ? edited.id : id));
     try {
       await saveCharacters(
         list.map((c) => (c === current ? edited : c)),
         edited.id,
+        members,
       );
     } catch (e) {
       controls.error(errorText(e));
@@ -284,8 +304,9 @@ async function main() {
 
   const llm = new LlmSource({ agent, log, onError: (e) => controls.error(`LLM: ${errorText(e)}`) });
 
-  /** Everyone set up takes part in free talk until #16 puts several on stage. */
-  const participants = () => characters().map(({ id, name }) => ({ id, name }));
+  /** The characters on stage take part in free talk. */
+  const participants = () =>
+    config.get("stage").flatMap((id) => characters().filter((c) => c.id === id).map(({ name }) => ({ id, name })));
 
   const orchestrator = new Orchestrator({
     participants,
@@ -333,7 +354,7 @@ async function main() {
     } else if (!llmModel()) {
       controls.error("Set an LLM model in Settings first.");
     } else if (participants().length < 2) {
-      controls.error("Free talk needs at least two characters. Add one in Settings.");
+      controls.error("Free talk needs at least two characters on stage. Pick another one to bring it on stage.");
     } else {
       startFree(topic);
     }
@@ -354,6 +375,7 @@ async function main() {
     selectCharacter: (id) => void selectCharacter(id),
     addCharacter: (duplicate) => void addCharacter(duplicate),
     removeCharacter: () => void removeCharacter(),
+    setOnStage: (on) => void setOnStage(on),
     editCharacter: (patch) => void editCharacter(patch),
   });
 
@@ -376,17 +398,16 @@ async function main() {
   );
 
   void refreshSpeakers();
-  void showCharacter();
+  void syncStage();
 
-  new ResizeObserver(() => avatar?.resize()).observe(stage);
+  new ResizeObserver(() => stageView.resize()).observe(stage);
 
   let last = performance.now();
   const frame = (now: number) => {
     // Clamp so a backgrounded window doesn't produce one huge step.
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    driver.tick(dt, avatar);
-    avatar?.update(dt);
+    stageView.tick(dt);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

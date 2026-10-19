@@ -5,6 +5,7 @@ import {
   DEFAULT_SPEAKER,
   idError,
   migrateCharacter,
+  normalizeStage,
   newCharacter,
   resolveCharacter,
   sanitizeCharacters,
@@ -102,5 +103,15 @@ describe("resolveCharacter", () => {
 
   it("rejects an unknown named character", () => {
     expect(() => resolveCharacter(list, "a", "nobody")).toThrow(/unknown character "nobody"/);
+  });
+});
+
+describe("normalizeStage", () => {
+  const list = [character("a"), character("b"), character("c")];
+
+  it("keeps known ids once, in order, and always the default", () => {
+    expect(normalizeStage(["c", "x", "c", 3, "a"], list, "a")).toEqual(["c", "a"]);
+    expect(normalizeStage(["c"], list, "b")).toEqual(["c", "b"]);
+    expect(normalizeStage(undefined, list, "a")).toEqual(["a"]);
   });
 });

@@ -114,3 +114,15 @@ export function resolveCharacter(characters: Character[], defaultId: string, id?
   // A dangling default falls back to the first character; Config keeps at least one.
   return characters[0];
 }
+
+/**
+ * Who is on stage, left to right: known ids only, no duplicates, and always
+ * including the default character (the one that speaks unaddressed lines).
+ */
+export function normalizeStage(stored: unknown, characters: Character[], defaultId: string): string[] {
+  const known = new Set(characters.map((c) => c.id));
+  const ids = Array.isArray(stored) ? stored.filter((id): id is string => typeof id === "string" && known.has(id)) : [];
+  const stage = [...new Set(ids)];
+  if (known.has(defaultId) && !stage.includes(defaultId)) stage.push(defaultId);
+  return stage;
+}

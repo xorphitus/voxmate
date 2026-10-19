@@ -7,7 +7,7 @@ import type { Speaker } from "../voice/voicevox";
 import type { ThemePreference } from "./theme";
 
 /** Settings edited as plain fields; characters have their own handlers. */
-export type SimpleSetting = Exclude<keyof Settings, "characters" | "defaultCharacter">;
+export type SimpleSetting = Exclude<keyof Settings, "characters" | "defaultCharacter" | "stage">;
 
 export interface ControlHandlers {
   stop(): void;
@@ -25,6 +25,8 @@ export interface ControlHandlers {
   /** Add a character, copying the one on stage if `duplicate`, and put it on stage. */
   addCharacter(duplicate: boolean): void;
   removeCharacter(): void;
+  /** Bring the selected character on stage or take it off. */
+  setOnStage(on: boolean): void;
   /** Edit the character on stage. */
   editCharacter(patch: Partial<Character>): void;
 }
@@ -53,6 +55,7 @@ export class Controls implements TextSource {
   private readonly characterLlmModel = $<HTMLInputElement>("character-llm-model");
   private readonly characterVoice = new Map<VoiceField, HTMLInputElement>();
   private readonly characterRemove = $<HTMLButtonElement>("character-remove");
+  private readonly characterOnStage = $<HTMLInputElement>("character-on-stage");
   private readonly voicevoxUrl = $<HTMLInputElement>("voicevox-url");
   private readonly volume = $<HTMLInputElement>("volume");
   private readonly alwaysOnTop = $<HTMLInputElement>("always-on-top");
@@ -80,7 +83,7 @@ export class Controls implements TextSource {
 
   constructor(settings: Settings, handlers: ControlHandlers) {
     this.buildVoiceInputs(handlers);
-    this.setCharacters(settings.characters, settings.defaultCharacter);
+    this.setCharacters(settings.characters, settings.defaultCharacter, settings.stage);
     this.voicevoxUrl.value = settings.voicevoxUrl;
     this.volume.value = String(settings.volume);
     this.alwaysOnTop.checked = settings.alwaysOnTop;
@@ -123,6 +126,7 @@ export class Controls implements TextSource {
     $("character-add").addEventListener("click", () => handlers.addCharacter(false));
     $("character-duplicate").addEventListener("click", () => handlers.addCharacter(true));
     this.characterRemove.addEventListener("click", () => handlers.removeCharacter());
+    this.characterOnStage.addEventListener("change", () => handlers.setOnStage(this.characterOnStage.checked));
     this.characterName.addEventListener("change", () => {
       const name = this.characterName.value.trim();
       if (name) handlers.editCharacter({ name });
@@ -245,13 +249,16 @@ export class Controls implements TextSource {
     );
   }
 
-  /** Shows the character list, with `currentId` on stage and in the editor. */
-  setCharacters(characters: Character[], currentId: string): void {
+  /** Shows the character list, with `currentId` selected (and in the editor). */
+  setCharacters(characters: Character[], currentId: string, stage: string[]): void {
     this.current = characters.find((c) => c.id === currentId) ?? characters[0];
     this.character.replaceChildren(
       ...characters.map((c) => new Option(c.name, c.id, false, c === this.current)),
     );
     this.characterRemove.disabled = characters.length < 2;
+    this.characterOnStage.checked = stage.includes(this.current.id);
+    // The selected character speaks unaddressed lines, so the last one on stage stays.
+    this.characterOnStage.disabled = this.characterOnStage.checked && stage.length < 2;
     this.characterName.value = this.current.name;
     this.characterId.value = this.current.id;
     this.characterModel.textContent = this.current.modelPath?.split("/").pop() ?? "none (Load model…)";

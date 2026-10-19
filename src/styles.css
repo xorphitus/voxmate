@@ -257,3 +257,25 @@ small {
 #free-max-minutes {
   width: 5em;
 }
+
+/* One column per character on stage; positioned by StageView (domSlots). */
+.slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.slot-label {
+  position: absolute;
+  top: 48px;
+  left: 8px;
+  right: 8px;
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.slot-label.error {
+  color: var(--error);
+}

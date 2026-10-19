@@ -1,5 +1,5 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
-import { type Character, migrateCharacter, sanitizeCharacters } from "./characters";
+import { type Character, migrateCharacter, normalizeStage, sanitizeCharacters } from "./characters";
 import type { ThemePreference } from "./ui/theme";
 
 /**
@@ -11,8 +11,10 @@ export interface Settings {
   voicevoxUrl: string;
   /** Never empty; Config.open migrates the old single-character keys. */
   characters: Character[];
-  /** Id of the character on stage, used by lines that name none. */
+  /** Id of the default character: it speaks lines that name none and is always on stage. */
   defaultCharacter: string;
+  /** Character ids on stage, left to right. */
+  stage: string[];
   volume: number;
   apiEnabled: boolean;
   apiPort: number;
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voicevoxUrl: "http://127.0.0.1:50021",
   characters: [],
   defaultCharacter: "default",
+  stage: [],
   volume: 1,
   apiEnabled: true,
   apiPort: 50080,
@@ -92,6 +95,7 @@ export class Config {
     if (!characters.some((c) => c.id === this.values.defaultCharacter)) {
       await this.set("defaultCharacter", characters[0].id);
     }
+    await this.set("stage", normalizeStage(this.values.stage, characters, this.values.defaultCharacter));
   }
 
   all(): Settings {
