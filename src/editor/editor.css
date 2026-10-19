@@ -97,3 +97,55 @@ body.editor {
 #status.error {
   color: var(--error);
 }
+
+/* Accent editing: a column per mora, pitch above and length below the kana. */
+.accent-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: flex-end;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.accent-panel .phrase {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.accent-panel .mora-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.accent-panel input.pitch {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 18px;
+  height: 64px;
+}
+
+.accent-panel input.length {
+  width: 40px;
+}
+
+.accent-panel .mora {
+  min-width: 2em;
+  padding: 2px 4px;
+}
+
+.accent-panel .mora.accent {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: bold;
+}
+
+.accent-panel .reset,
+.accent-panel .pause {
+  align-self: center;
+  color: var(--muted);
+}

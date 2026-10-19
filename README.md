@@ -186,6 +186,11 @@ options.
   or play all; the line being spoken is highlighted. Scenes are saved as the
   `POST /scenes` JSON, so a saved file can be posted from a script as is.
   **Export WAV…** (or ⤓ on a line) synthesizes the scene into one WAV file.
+  **♪** on a line edits its accent and intonation like VOICEVOX: click a mora
+  to move the phrase's accent there, drag the sliders above and below the kana
+  for each mora's pitch and length, and ↺ resets a phrase. The edited query is
+  saved with the line and played as is, with the character's voice settings
+  of that moment baked in. Changing the text afterwards asks to drop it.
   **Open…** also imports the talk track of a VOICEVOX project (`.vvproj`):
   each item becomes a line with its edited query, and its voice maps to the
   character with that speaker (or stays as the line's `speaker`).

@@ -8,7 +8,9 @@ import { PORTABLE_EXPRESSIONS, PORTABLE_GESTURES } from "../avatar/cues";
 import { type Character, sanitizeCharacters } from "../characters";
 import { SETTINGS_FILE } from "../config";
 import { followTheme, type ThemePreference } from "../ui/theme";
-import { inRange, VOICE_RANGES, type VoiceField } from "../voice/params";
+import { inRange, mergeVoice, sanitizeVoice, VOICE_RANGES, type VoiceField } from "../voice/params";
+import type { AccentPhrase, AudioQuery } from "../voice/timeline";
+import { changeAccent, isVoiced, LENGTH_RANGE, type MoraUpdate, PITCH_RANGE, setMora } from "./accent";
 import { importVvproj } from "./vvproj";
 import { EDITOR_PLAY, EDITOR_STOP, type EditorPlay, STAGE_LINE, type StageLine } from "./bridge";
 import {
@@ -72,9 +74,124 @@ async function main() {
   };
   const characterOf = (id: string): Character | undefined => characters.find((c) => c.id === id);
 
+  /** Lines (by key) whose accent panel is open. */
+  const accentOpen = new Set<string>();
+
   function update(index: number, patch: Partial<EditorLine>, rerender = false) {
     lines = lines.map((l, i) => (i === index ? { ...l, ...patch } : l));
     if (rerender) render();
+  }
+
+  /** For results that arrive after an await, when the line may have moved. */
+  function updateByKey(key: string, patch: Partial<EditorLine>) {
+    const index = lines.findIndex((l) => l.key === key);
+    if (index >= 0) update(index, patch, true);
+  }
+
+  /** The speaker the stage would use for the line. */
+  function speakerOf(line: EditorLine): number {
+    const speaker = line.speaker ?? characterOf(line.character)?.speaker;
+    if (speaker === undefined) throw new Error(`unknown character "${line.character}"`);
+    return speaker;
+  }
+
+  const updateMoras = (line: EditorLine) => (update: MoraUpdate, accentPhrases: AccentPhrase[]) =>
+    invoke<AccentPhrase[]>("voicevox_update_moras", { update, accentPhrases, speaker: speakerOf(line) });
+
+  /** Opens or closes the accent panel, asking the engine for a query the first time. */
+  async function toggleAccent(index: number) {
+    const line = lines[index];
+    if (accentOpen.delete(line.key)) {
+      render();
+      return;
+    }
+    if (!line.audioQuery) {
+      if (!line.text.trim()) {
+        fail("Write the line before editing its accent.");
+        return;
+      }
+      try {
+        // The character's voice is baked into the query: an edited query is played as is.
+        const voice = mergeVoice(characterOf(line.character)?.voice, sanitizeVoice(line.voice));
+        const query = await invoke<AudioQuery>("voicevox_audio_query", {
+          text: line.text.trim(),
+          speaker: speakerOf(line),
+          voice,
+        });
+        updateByKey(line.key, { audioQuery: query });
+      } catch (e) {
+        fail(`Could not get the accent: ${errorText(e)}`);
+        return;
+      }
+    }
+    accentOpen.add(line.key);
+    render();
+  }
+
+  async function moveAccent(line: EditorLine, phrase: number, accent: number) {
+    if (!line.audioQuery) return;
+    try {
+      updateByKey(line.key, { audioQuery: await changeAccent(line.audioQuery, phrase, accent, updateMoras(line)) });
+    } catch (e) {
+      fail(`Could not change the accent: ${errorText(e)}`);
+    }
+  }
+
+  function renderAccent(line: EditorLine, index: number): HTMLElement {
+    const query = line.audioQuery;
+    if (!query) return el("div");
+    const phrases = query.accent_phrases.map((phrase, p) => {
+      const moras = phrase.moras.map((mora, m) => {
+        const slider = (field: "pitch" | "vowel_length", range: typeof PITCH_RANGE, title: string) => {
+          const input = el("input", {
+            type: "range",
+            className: field === "pitch" ? "pitch" : "length",
+            min: String(range.min),
+            max: String(range.max),
+            step: String(range.step),
+            value: String(mora[field]),
+            title: `${title} ${mora[field].toFixed(3)}`,
+            disabled: field === "pitch" && !isVoiced(mora),
+          });
+          input.addEventListener("input", () => {
+            const current = lines[index].audioQuery;
+            if (!current) return;
+            update(index, { audioQuery: setMora(current, p, m, { [field]: Number(input.value) }) });
+            input.title = `${title} ${Number(input.value).toFixed(3)}`;
+          });
+          return input;
+        };
+        const text = el("button", {
+          type: "button",
+          className: `mora${m + 1 === phrase.accent ? " accent" : ""}`,
+          textContent: mora.text,
+          title: "Put the accent here",
+        });
+        text.addEventListener("click", () => void moveAccent(lines[index], p, m + 1));
+        return el(
+          "div",
+          { className: "mora-column" },
+          slider("pitch", PITCH_RANGE, "Pitch"),
+          text,
+          slider("vowel_length", LENGTH_RANGE, "Length (s)"),
+        );
+      });
+      const reset = el("button", { type: "button", className: "reset", textContent: "↺", title: "Reset this phrase" });
+      reset.addEventListener("click", () => void moveAccent(lines[index], p, phrase.accent));
+      return el(
+        "div",
+        { className: "phrase" },
+        ...moras,
+        reset,
+        ...(phrase.pause_mora ? [el("span", { className: "pause", textContent: "、" })] : []),
+      );
+    });
+    const drop = el("button", { type: "button", textContent: "Drop edits", title: "Go back to the engine's accent" });
+    drop.addEventListener("click", () => {
+      accentOpen.delete(line.key);
+      update(index, { audioQuery: undefined }, true);
+    });
+    return el("div", { className: "accent-panel" }, ...phrases, drop);
   }
 
   function options(values: readonly string[], selected: string, empty?: string) {
@@ -98,6 +215,19 @@ async function main() {
       placeholder: line.direction ? "Stage direction (logged, not spoken)" : "Line",
     });
     text.addEventListener("input", () => update(index, { text: text.value }));
+    // An edited query is stale once the text changes.
+    let committed = line.text;
+    text.addEventListener("change", () => {
+      if (!lines[index].audioQuery || text.value === committed) return;
+      if (window.confirm("The text changed, so the edited accent no longer fits. Drop it?")) {
+        accentOpen.delete(line.key);
+        committed = text.value;
+        update(index, { audioQuery: undefined }, true);
+      } else {
+        text.value = committed;
+        update(index, { text: committed });
+      }
+    });
 
     const emotion = el("select", { title: "Expression held for the line" });
     emotion.append(...options(PORTABLE_EXPRESSIONS, line.emotion ?? "", "— expression"));
@@ -148,6 +278,7 @@ async function main() {
       button("▶", "Play this line", () => void play(index, index + 1)),
       button("▶…", "Play from here", () => void play(index)),
       button("⤓", "Export this line as WAV", () => void exportWav(index, index + 1)),
+      button("♪", "Edit accent and intonation", () => void toggleAccent(index)),
       button("＋", "Add a line below", () => {
         lines = insertLine(lines, index + 1, blankLine(lines[index].character));
         render();
@@ -172,6 +303,7 @@ async function main() {
       el("div", { className: "main" }, who, text, emotion, gesture, el("label", {}, direction, " direction")),
       actions,
       el("div", { className: "voice" }, ...voice, line.audioQuery ? el("small", {}, "uses an edited audio_query") : ""),
+      ...(accentOpen.has(line.key) && line.audioQuery ? [renderAccent(line, index)] : []),
     );
     item.dataset.key = line.key;
     return item;

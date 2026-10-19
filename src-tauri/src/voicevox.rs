@@ -1,7 +1,8 @@
 //! Minimal client for the VOICEVOX engine HTTP API.
 //!
-//! Only the endpoints voxmate needs: `GET /speakers`, `POST /audio_query` and
-//! `POST /synthesis`. The audio query is kept as raw JSON so fields added by
+//! Only the endpoints voxmate needs: `GET /speakers`, `POST /audio_query`,
+//! `POST /synthesis`, and `/mora_data`, `/mora_pitch` and `/mora_length` for
+//! the scene editor's accent editing. The audio query is kept as raw JSON so fields added by
 //! newer engine versions survive the round trip to `/synthesis` untouched.
 
 use std::sync::RwLock;
@@ -137,6 +138,26 @@ impl VoiceParams {
     }
 }
 
+/// Which mora values the engine recomputes after an accent edit.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MoraUpdate {
+    /// Pitch and length (`/mora_data`).
+    Data,
+    Pitch,
+    Length,
+}
+
+impl MoraUpdate {
+    fn endpoint(self) -> &'static str {
+        match self {
+            Self::Data => "/mora_data",
+            Self::Pitch => "/mora_pitch",
+            Self::Length => "/mora_length",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Synthesis {
     pub query: Value,
@@ -225,6 +246,18 @@ impl VoicevoxClient {
             .post(self.endpoint("/audio_query"))
             .query(&[("text", text), ("speaker", speaker.as_str())]);
         Ok(self.send("/audio_query", req).await?.json().await?)
+    }
+
+    /// Recomputes the pitch and/or length of every mora in `accent_phrases`
+    /// (the engine's JSON, passed through untouched) for `speaker`.
+    pub async fn update_moras(&self, update: MoraUpdate, accent_phrases: &Value, speaker: u32) -> Result<Value> {
+        let endpoint = update.endpoint();
+        let req = self
+            .http
+            .post(self.endpoint(endpoint))
+            .query(&[("speaker", speaker)])
+            .json(accent_phrases);
+        Ok(self.send(endpoint, req).await?.json().await?)
     }
 
     pub async fn synthesis(&self, query: &Value, speaker: u32) -> Result<Vec<u8>> {
@@ -359,6 +392,31 @@ mod tests {
         let out = client.synthesize("x", 3, &voice, None).await.unwrap();
         // The returned query is what was synthesized, so lip sync follows it.
         assert_eq!(out.query, expected);
+    }
+
+    #[tokio::test]
+    async fn updates_moras_through_the_chosen_endpoint() {
+        let server = MockServer::start().await;
+        let phrases =
+            json!([{"moras": [{"text": "ア", "vowel": "a", "vowel_length": 0.1, "pitch": 5.0}], "accent": 1}]);
+        let mut updated = phrases.clone();
+        updated[0]["moras"][0]["pitch"] = json!(5.5);
+        Mock::given(method("POST"))
+            .and(path("/mora_pitch"))
+            .and(query_param("speaker", "3"))
+            .and(body_json(&phrases))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&updated))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = VoicevoxClient::new(&server.uri()).unwrap();
+        let out = client.update_moras(MoraUpdate::Pitch, &phrases, 3).await.unwrap();
+        assert_eq!(out, updated);
+        assert_eq!(
+            serde_json::from_value::<MoraUpdate>(json!("data")).unwrap(),
+            MoraUpdate::Data
+        );
     }
 
     #[tokio::test]

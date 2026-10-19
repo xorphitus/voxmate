@@ -17,7 +17,7 @@ export interface EditorLine {
   emotion?: string;
   direction?: boolean;
   cues?: Cue[];
-  /** Kept from loaded files; the editor doesn't edit it yet. */
+  /** Edited accent and intonation (♪), or kept from a loaded file. */
   audioQuery?: AudioQuery;
   speaker?: number;
 }

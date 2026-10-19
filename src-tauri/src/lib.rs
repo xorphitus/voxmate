@@ -16,7 +16,7 @@ use tauri_plugin_store::StoreExt;
 
 use crate::llm::{ChatMessage, LlmClient};
 use crate::stage::{Capabilities, StageEvent, StageTracker};
-use crate::voicevox::{Speaker, VoiceParams, VoicevoxClient};
+use crate::voicevox::{MoraUpdate, Speaker, VoiceParams, VoicevoxClient};
 
 /// Shared with the frontend (`src/config.ts`), which owns writing it.
 const SETTINGS_FILE: &str = "settings.json";
@@ -84,6 +84,37 @@ async fn voicevox_synthesize(
         .await
         .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(synthesis.pack()))
+}
+
+/// A fresh `audio_query` for the editor to edit, with `voice` written over
+/// the engine's defaults (an edited query doesn't get the character's voice
+/// at play time any more).
+#[tauri::command]
+async fn voicevox_audio_query(
+    text: String,
+    speaker: u32,
+    voice: Option<VoiceParams>,
+    client: State<'_, Arc<VoicevoxClient>>,
+) -> Result<serde_json::Value, String> {
+    let voice = voice.unwrap_or_default();
+    voice.validate()?;
+    let mut query = client.audio_query(&text, speaker).await.map_err(|e| e.to_string())?;
+    voice.apply(&mut query);
+    Ok(query)
+}
+
+/// Recomputes mora pitch and/or length after an accent edit.
+#[tauri::command]
+async fn voicevox_update_moras(
+    update: MoraUpdate,
+    accent_phrases: serde_json::Value,
+    speaker: u32,
+    client: State<'_, Arc<VoicevoxClient>>,
+) -> Result<serde_json::Value, String> {
+    client
+        .update_moras(update, &accent_phrases, speaker)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -420,6 +451,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             voicevox_speakers,
             voicevox_synthesize,
+            voicevox_audio_query,
+            voicevox_update_moras,
             set_voicevox_url,
             llm_chat,
             llm_cancel,
