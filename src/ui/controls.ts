@@ -100,7 +100,7 @@ export class Controls implements TextSource {
     this.showMode(settings.llmMode);
     this.apiEnabled.checked = settings.apiEnabled;
     this.apiPort.value = String(settings.apiPort);
-    document.body.classList.toggle("transparent", settings.transparent);
+    document.documentElement.classList.toggle("transparent", settings.transparent);
 
     this.form.addEventListener("submit", (e) => {
       e.preventDefault();

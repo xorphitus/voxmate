@@ -57,7 +57,9 @@ body {
   color: var(--fg);
 }
 
-body.transparent {
+/* Both: html paints its own background behind body. */
+:root.transparent,
+:root.transparent body {
   background: transparent;
 }
 
@@ -103,7 +105,7 @@ body.transparent {
   margin: 0;
 }
 
-body.transparent #placeholder {
+:root.transparent #placeholder {
   background: var(--panel);
 }
 

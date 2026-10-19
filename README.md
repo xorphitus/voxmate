@@ -191,7 +191,9 @@ options.
   character with that speaker (or stays as the line's `speaker`).
 - **Always on top** takes effect immediately.
 - **Transparent background** needs a restart. On macOS it uses the private
-  API (`macOSPrivateApi`). On Linux it only works under a compositing window manager.
+  API (`macOSPrivateApi`). On Linux it only works under a compositor (any
+  Wayland session, or X11 with a compositing window manager); the window
+  decorations stay opaque. See Troubleshooting if it still isn't see-through.
 
 ## Development
 
@@ -232,6 +234,12 @@ The queue synthesizes the next sentence while the current one plays.
 
 - **Blank or white window on Linux (NVIDIA / some Wayland setups):** start with
   `WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm tauri dev`.
+- **Transparent background is not see-through on Linux:** check that the
+  setting was saved before the last start. If the window is black or opaque,
+  try starting with `WEBKIT_DISABLE_COMPOSITING_MODE=1`, or without
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` if your GPU works without it. If it looks
+  frosted or tinted, it is the compositor: on Hyprland, check the window rules
+  (`opacity`, `noblur`) for `voxmate` in `hyprctl clients`.
 - **No sound on Linux:** WebKitGTK plays audio through GStreamer. Make sure
   `gst-plugins-base` and `gst-plugins-good` are installed (`nix develop` sets this up).
 - **"cannot reach VOICEVOX engine":** make sure the engine is running, then check that `curl 127.0.0.1:50021/version` responds.
